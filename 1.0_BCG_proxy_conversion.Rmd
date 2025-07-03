@@ -1,0 +1,1323 @@
+---
+title: "BCG_proxy_conversion"
+author: "Christy Dolph"
+date: "2025-04-17"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# Assemble BCG scores and create BCG "proxies" for datasets that use other biological metrics
+
+Here, biological condition data is assembled from multiple sources
+across the conterminous United States. Some of this data was compiled
+during a first EPA project (EPA Project 'Round 1') focused on the Upper
+Mississippi-Ohio-Tennessee River basins. A second EPA project expanded
+data collection to the entire coterminous United States (EPA Project
+'Round 2').
+
+Some states (e.g., California, Connecticut, Florida, Illinois, Indiana,
+Minnesota, Ohio, Oregon, Texas) have developed BCG criteria explicitly,
+and have BCG scores available for streams and rivers. Other states use
+other types of biological indices to measure biological condition. In
+this script, I assigned BCG "proxies" to these other types of biological
+indices, using methods describing in the Appendix of Vossler et al.
+(2023):
+[https://doi.org/10.1073/pnas.21](https://doi.org/10.1073/pnas.2120251119){.uri}
+
+Data was assembled by Christy Dolph and Virginia Callison.
+
+For questions email dolph008\@umn.edu
+
+Updates
+
+1.29.24 - Original script
+
+4.16.25 - add Florida data and to move geospatial processing into R
+script
+
+4.17.25 - clean up script and convert to R Markdown
+
+4.24.25 - add Connecticut data
+
+5.14.25 - add in newer North Carolina data that was retrieved since last
+round of project
+
+## Set Up Workspace
+
+Clean up workspace and load packages (or install packages if necessary):
+
+```{r, setup, include =FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list=ls())
+want <- c("data.table", "fixest", "tidyverse", "tidylog", "readxl", "lubridate", "rmarkdown", "writexl", "sf", "mapview", "xtable", "pals", "tmap", "maps", "gridExtra", "ffmpeg", "magick", "animation", "geosphere", "nhdplusTools", "knitr")
+   
+
+need <- want[!(want %in% installed.packages()[,"Package"])]
+if (length(need)) install.packages(need)
+lapply(want, function(i) require(i, character.only=TRUE))
+rm(want, need)
+```
+
+Set Up Working directories:
+
+```{r, Create list of directories}
+dir <- list()
+
+#Main directory: 
+dir$root <- getwd()
+
+#Directory for loading data from EPA Project Round 1:
+dir$data_r1 <- paste(dir$root, "/EPA_Round_1_data", sep = "")
+
+#Directory for loading data from EPA Project Round 2:
+dir$data_r2 <- paste(dir$root, "/EPA_Round_2_data", sep = "")
+
+#Directory for spatial data: 
+spatial_dir<-paste(dir$root, "/Spatial_data", sep="")
+
+#Directory with HUC shapefiles: 
+dir$data_huc  <- paste(dir$root, "/Spatial_data/HUC_spatial_data", sep = "")
+
+#Output directory for most data: 
+dir$output<-paste(dir$root, "/BCG_output", sep="")
+
+#Create output folder for processed data, if it doesn't already exist:
+
+dir.create(file.path(getwd(), "BCG_output"))
+```
+
+## Load in data from EPA Project Round 1 (Upper Mississippi-Ohio-Tennessee River Basins).
+
+Most of this data was already pre processed and already has BCG scores
+assigned according to criteria described in Appendix of Vossler et al
+(2023) <https://doi.org/10.1073/pnas.2120251119>
+
+Notes:
+
+-   OH and VA data only have year data available, not date. So assigned
+    a dummy 'date' #value based on year #Different dates were assigned
+    for replicate samples in same year #these were likely collected
+    weeks or months apart
+
+-   WV has coordinates in UTM instead of Lat/Long; replace with Lat/Long
+
+-   Blank lat/long values for MN & TN
+
+    -   MN - original BCG table in Microsoft Access from MPCA, some
+        sites are missing lat/longs - omit these values
+
+    -   TN has 3 blank values - omit
+
+-   Processing Iowa separately from other Round 1 sites because it was
+    downloaded more recently and was pre-formatted differently; see note
+    and separate data processing for IA below
+
+```{r}
+###
+#Read in files for all states from round 1 EXCEPT Iowa:
+
+files<-fs::dir_ls(path = dir$data_r1, regexp = "(IA_bug_data_10_3_19)\\.csv", invert = TRUE)
+files
+
+BCG.Round1<-readr::read_csv(files, id = "path")
+head(BCG.Round1)
+names(BCG.Round1)
+#View(BCG.Round1)
+
+###
+#Pull out OH and VA data to format separately, because they does not have Date values (just Year)
+#Note dummy dates are assigned; if multiple samples were collected in one year, they are
+#assigned different dates (ie, 8/1 vs 8/2 of a given year)
+OH.VA<-BCG.Round1 %>% 
+  filter(State=="OH"|State=="VA") %>%
+  mutate(Year=Date) %>% 
+  group_by(Site_ID, Year) %>% 
+  mutate(DummyDate = (paste(Year, "08", row_number(), sep = "-"))) %>% 
+  mutate(DummyDate=as.Date(DummyDate, format="%Y-%m-%d")) %>% 
+  ungroup() %>% 
+  rename(SiteID=Site_ID, BCG_proxy=BCG_final) %>% #make column names consistent across datasets
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  select(State, SiteID, DummyDate, Lat, Long, Taxa, BCG_proxy) %>%   #select variables we need
+  rename(Date=DummyDate) #rename Date
+#View(OH.VA)
+
+###
+#Pull out WV data to process separately;
+#West Virginia values are in UTM - need to replace with Lat/Long
+#First need to identify correct UTM zone: 
+
+#Check map zones for West Virginia UTM data
+#exclude blank coordinate values
+#internet search shows WV could be zone 17N or 18N;
+
+df=BCG.Round1 %>% filter(State=="WV") %>% filter(!is.na(UTMN)|!is.na(UTME))
+df
+sdf = st_as_sf(df, coords=c('UTME', 'UTMN'))
+#set expected zone 
+zone = 32617 #crs for UTM Zone 17N (via internet search)
+# Create an sf object with UTM coordinates
+utm_sf <- st_as_sf(df, coords = c("UTME", "UTMN"), crs = zone)  # crs for UTM zone 17N (WV)
+#check map:
+mapview(utm_sf) #map indicates 17N (crs=32617) is correct
+
+#Format WV data
+WV<-BCG.Round1 %>% 
+  filter(State=="WV") %>% 
+  filter(!is.na(UTMN)|!is.na(UTME)) %>% #omit blank UTM values
+  mutate(Date=as.Date(Date, format="%m/%d/%Y")) %>% #format date
+  rename(SiteID=Site_ID, BCG_proxy=BCG_final) %>% #make column names consistent across datasets
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  select(State, SiteID, Date, UTME, UTMN, Taxa, BCG_proxy)  #select variables we need
+  
+
+# Convert UTM to Lat/Long
+# Create an sf object with UTM coordinates
+utm_sf2 <- st_as_sf(WV, coords = c("UTME", "UTMN"), crs = zone)  # crs for UTM zone 17N (WV)
+lat_long_sf <- st_transform(utm_sf2, 4326) #4326 is crs for WGS84 coordinate system
+WV.latlong<-cbind(WV, st_coordinates(lat_long_sf))
+#View(WV.latlong)
+#rename columns
+WV.latlong<-WV.latlong %>% 
+  rename(Lat=Y, Long=X) %>% 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy)#reorder columns
+#View(WV.latlong)
+
+###
+#Format remaining data to match Round 2 data below:
+BCG.Round1.v2<-BCG.Round1 %>% 
+  filter(!State=="OH"&!State=="VA"&!State=="WV") %>% #omit Ohio & Virginia data, formatted separately above
+  mutate(Date=as.Date(Date, format="%m/%d/%Y")) %>% #format date
+  rename(SiteID=Site_ID, BCG_proxy=BCG_final) %>% #make column names consistent across datasets
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%    #select variables we need
+  na.omit()#omit NA values
+
+#Corrections:
+#some TN locations erroneously have positive instead of negative Long values
+#Also some Lat/Long values for WI sites are 0 - omit these records
+
+BCG.Round1.v2<-BCG.Round1.v2 %>% 
+  mutate(Long=ifelse(Long>0, Long*-1, Long)) %>% 
+  filter(!Lat==0)
+
+
+#Check NAs for Lat/Long
+summary(BCG.Round1.v2$Lat)
+#Check which states have missing values:
+BCG.Round1.v2 %>% filter(is.na(Lat)) %>% group_by(State) %>% count()
+
+###
+#Iowa 
+#processing Iowa separately from other Round 1 sites because it was 
+#downloaded more recently and was pre-formatted differently
+
+IA<-readr::read_csv(paste(dir$data_r1, '/IA_bug_data_10_3_19.csv', sep=""))
+names(IA)
+
+#format IA data
+IA1<-IA %>% 
+  mutate(Date=as.Date(Date, format="%m/%d/%Y")) %>% #format date
+  mutate(State="IA") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  rename(BCG_proxy=BCG_final) %>% #make column names consistent across datasets
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) #select variables we need
+#View(IA1)
+nrow(IA1)
+
+###
+#MERGE ALL EPA ROUND 1 DATA:
+
+BCG.Round1.ALL<-rbind(OH.VA, WV.latlong, BCG.Round1.v2, IA1)
+
+BCG.Round1.ALL<-BCG.Round1.ALL %>% 
+  mutate(SiteID=as.character(SiteID)) #format SiteID to be able to merge later
+
+#View(BCG.Round1.ALL)
+
+#Check number of records
+nrow(BCG.Round1.ALL)
+
+#Check date range 
+summary(BCG.Round1.ALL$Date)
+
+#Write to table (if desired)
+
+write_xlsx(BCG.Round1.ALL, paste(dir$output, "/EPA_Round1_BCG_data_allsamples.xlsx",sep=""), col_names=TRUE)
+```
+
+## Load in & pre-process EPA Project Round 2 data (assembled by Virginia & Christy):
+
+BCG "proxies" for these datasets were assigned according to methods
+described in Bonacquist-Currin et al. (in prep).
+
+**Chesapeake:**
+
+```{r}
+#Chesapeake Bay index (BIBI)
+ches<-read_excel(paste(dir$data_r2, '/Chessie BIBI 100 Runs 1992-2017.xlsx', sep=""))
+#View(head(ches))
+names(ches)
+nrow(ches)
+#they use mean rating of 100 bootstrapped samples for each site
+ches1<-ches %>% 
+  mutate(Date=as.Date(DATE, format="%Y-%m-%d")) %>% #format date
+  mutate(State="Chesapeake") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  mutate(BCG_proxy=case_when(MEAN_RATING=="excellent" ~ 2,
+                             MEAN_RATING=="good" ~ 3,
+                             MEAN_RATING=="fair" ~ 4,
+                            MEAN_RATING=="poor" ~ 5,
+                            MEAN_RATING=="very_poor" ~ 6)) %>% #Assign BCG scores 
+  rename(SiteID=STATION, Date=Date, Lat=LATITUDE, Long=LONGITUDE) %>% #make column names consistent across datasets
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+#View(head(ches1))
+nrow(ches1)
+
+#Date range:
+summary(ches1$Date)
+
+#Number of unique sites
+ches1 %>% dplyr::select(SiteID) %>% 
+  distinct() %>% 
+  count()
+```
+
+**New York:**
+
+```{r}
+#New York BAP
+
+ny<-read_excel(paste(dir$data_r2, '/NY_BAP_IBI_Scores_2020.xlsx', sep=""))
+head(ny)
+names(ny)
+nrow(ny)
+
+ny1<-ny %>% 
+  mutate(Date=as.Date(date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="NY") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  group_by(site_id, Date, latitude, longitude, State, Taxa) %>%
+  summarize(mean_bap = mean(bap)) %>%   #take average of multiple reps sampled per site on the same date
+  mutate(BCG_proxy=case_when(mean_bap>=7.5 ~ 2,
+                             mean_bap<=7.5 & mean_bap>5 ~ 3,
+                             mean_bap<=5 & mean_bap > 2.5 ~ 4,
+                             mean_bap<=2.5 & mean_bap > 1.25 ~ 5,
+                             mean_bap<=1.25 ~ 6)) %>% #Assign BCG scores 
+  rename(SiteID=site_id, Lat=latitude, Long=longitude) %>% #make column names consistent across datasets
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+#View(head(ny1))
+nrow(ny1)
+
+#Date range:
+summary(ny1$Date)
+names(ny1)
+
+#Number of unique sites
+ny1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+```
+
+**Georgia:**
+
+```{r}
+#Georgia IBI
+ga<-read_excel(paste(dir$data_r2, '/GA_IBI_data.xlsx', sep=""))
+head(ga)
+names(ga)
+nrow(ga)
+#View(ga)
+
+#Note: StreamName not unique
+#Looks like CollectionNumber is unique Site ID
+#are multiple date visits to same CollectionNumber
+
+ga1<-ga %>% 
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="GA") %>% #make state ID
+  mutate(Taxa="Fish") %>% #ID taxonomic group
+  rename(SiteID=CollectionNumber, Lat=Y, Long=X) %>% #make column names consistent across datasets
+  mutate(BCG_proxy=case_when(IBICat=="Excellent" ~ 2,
+                             IBICat=="Good" ~ 3,
+                             IBICat=="Fair" ~ 4,
+                             IBICat=="Poor" ~ 5,
+                             IBICat=="Very Poor" ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID   
+nrow(ga)
+nrow(ga1)
+
+#view(head(ga1))
+
+#Date range:
+summary(ga1$Date)
+names(ga1)
+
+#Number of unique sites
+ga1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+
+```
+
+**Texas:**
+
+note: updated 5.13.25 to better reflect BCG categories mapped onto IBI
+
+```{r}
+#Texas IBI
+
+#first load Statewide IBI
+tx<-read_excel(paste(dir$data_r2, '/TX_BiologicalRawDataCombined_AllEcoregions_July2023_v1.xlsx', sep=""),
+               sheet="Statewide Bn IBI")
+head(tx)
+nrow(tx)
+names(tx)
+#View(tx)
+
+#Note: Lat/Long are reversed in original dataset
+
+tx1<-tx %>% 
+  #note: need to reverse lat/long, are reversed in original dataset!
+  rename(Date="Start Date", SiteID="Station ID", Lat="Longitude", Long="Latitude") %>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="TX") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  mutate(BCG_proxy=case_when(Value>=29 ~ 2,
+                             Value>=26 & Value <29 ~ 3,
+                             Value >=22 & Value <26 ~ 4,
+                             Value>=11 & Value <22 ~ 5,
+                             Value < 11 ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID   
+  nrow(tx)
+nrow(tx1)
+#View(tx1)
+
+#Load in Regionalized IBIs
+#replace Statewide values with regional values when available
+
+#Note: Lat/Long are reversed in original dataset
+
+tx.reg<-read_excel('./EPA_Round_2_data/TX_BiologicalRawDataCombined_AllEcoregions_July2023_v1.xlsx',
+               sheet="Regional Bn IBI")
+head(tx.reg)
+nrow(tx.reg)
+names(tx.reg)
+#View(tx.reg)
+
+tx.reg1<-tx.reg %>% 
+  #note: need to reverse lat/long, are reversed in original dataset!
+  rename(Date="Start Date", SiteID="Station ID", Lat="Longitude", Long="Latitude") %>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="TX") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  mutate(BCG_proxy=case_when(Value>=29 ~ 2,
+                             Value>=26 & Value <29 ~ 3,
+                             Value >=22 & Value <26 ~ 4,
+                             Value>=11 & Value <22 ~ 5,
+                             Value < 11 ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID   
+nrow(tx.reg)
+nrow(tx.reg1)
+#View(tx.reg1)
+
+#identify statewide values where regional values where available
+names(tx.reg1)
+reg.list<-unlist((tx.reg1[tx.reg1$SiteID %in% tx1$SiteID,c(2)]))
+reg.list
+
+#filter out statewide values where regional values are available
+tx2<-tx1 %>% 
+  filter(!SiteID %in% reg.list)
+nrow(tx1)
+nrow(tx2)
+
+#add in regional values
+#View(tx2)
+tx.all<-rbind(tx2, tx.reg1)
+
+#Date range:
+summary(tx.all$Date)
+names(tx.all)
+
+#Number of unique sites
+tx.all %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+
+```
+
+**California:**
+
+Note that we only have scores from the Southern California Coastal Water
+Project (a small portion of the state)
+
+```{r}
+#California
+
+ca<-read_excel(paste(dir$data_r2, '/CA_csci-core.xlsx', sep=""))
+head(ca)
+nrow(ca)
+names(ca)
+#View(ca)
+
+ca1<-ca %>% 
+  rename(Date="sampledate", SiteID="stationid", Lat="latitude", Long="longitude") %>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="CA") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  mutate(BCG_proxy=case_when(csci>=1 ~ 2,
+                             csci>=0.79 & csci <1 ~ 3,
+                             csci >=0.60 & csci <0.79 ~ 4,
+                             csci >=0.40 & csci <0.60 ~ 5,
+                             csci < 0.40 ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+nrow(ca1)
+
+#View(ca1)
+
+#Date range:
+summary(ca1$Date)
+names(ca1)
+
+#Number of unique sites
+ca1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+
+```
+
+**Idaho:**
+
+```{r}
+#Idaho 
+
+Idaho<-read_excel(paste(dir$data_r2, '/Idaho-stream-IBI-scores-corrected.xlsx', sep=""))
+head(Idaho)
+names(Idaho)
+nrow(Idaho)
+#View(Idaho)
+
+
+summary(as.numeric(Idaho$SMI))
+#note the large number of NULL values for SMI (the index); >50% of values
+Idaho1<-Idaho %>% 
+  rename(Date="ACT_START_DATE", SiteID="BURPID", Lat="LATITUDE", Long="LONGITUDE") %>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="ID") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  filter(!is.na(SMI)) %>%
+  filter(!SMI=="NULL") %>% 
+  mutate(SMI=as.numeric(SMI)) %>% #specify numeric
+  mutate(BCG_proxy=case_when(SMI>=69 ~ 2,
+                             SMI>=52 & SMI <69 ~ 3,
+                             SMI >=35 & SMI <52 ~ 4,
+                             SMI >=18 & SMI <35 ~ 5,
+                             SMI < 18 ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+nrow(Idaho1)
+
+summary(Idaho1$BCG_proxy)
+
+#View(Idaho1)
+
+#Date range:
+summary(Idaho1$Date)
+names(Idaho1)
+
+#Number of unique sites
+Idaho1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+```
+
+**Oregon:**
+
+```{r}
+#Oregon 
+
+#Oregon already has BCG scores assigned 
+
+OR<-read_excel(paste(dir$data_r2, '/OR_bcgcalc_RESULTS_20230804.xlsx', sep=""))
+
+head(OR)
+names(OR)
+nrow(OR)
+#View(OR)
+
+#Read in lat/longs
+OR.xy<-read_excel('./EPA_Round_2_data/OR_Translator_ORDEQ.xlsx')
+names(OR.xy)
+
+#merge lat/longs to BCG:
+OR.all<-merge(OR, OR.xy, by=c('SampleID_Tt'))
+nrow(OR.all)
+names(OR.all)
+#View(OR.all)
+
+OR1<-OR.all %>% 
+  rename(SiteID="SampleID_Tt", Lat="lat", Long="long", BCG_proxy="BCG_Status") %>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="OR") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+nrow(OR1)
+
+#View(OR1)
+
+#Date range:
+summary(OR1$Date)
+names(OR1)
+
+#Number of unique sites
+OR1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+
+```
+
+**Wyoming:**
+
+```{r}
+#Wyoming 
+WY<-read_excel(paste(dir$data_r2, '/WYRecords_Request_23-732_Complete.xlsx', sep=""), sheet = 'WSII Scores')
+head(WY)
+names(WY)
+nrow(WY)
+
+#Need to apply different criteria to different bioregions: 
+
+#look at max score for each bioregion (upper limit of Level 2)
+WY %>% 
+  group_by(`BIOREGION/LARGE RIVER`) %>% 
+  summarise(max=max(`WSII SCORE`))
+
+#Load in thresholds for different bioregions
+WY.thresh<-read_excel('./EPA_Round_2_data/WY_WSII_BCG_thresholds.xlsx', sheet="Sheet1")
+head(WY.thresh)
+
+#View(WY)
+
+WY1<-WY %>% 
+  rename(Date="COLLECTION DATE", SiteID="STATIONCODE", Lat="LAT(N)", Long="LONG(W)",
+                Bioregion="BIOREGION/LARGE RIVER", WSII="WSII SCORE", Rating="NARRATIVE RATING")%>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="WY") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>%  #ID taxonomic group
+  select(State, SiteID, Date, Lat, Long, Taxa, WSII, Bioregion, Rating) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+head(WY1)
+nrow(WY1)
+#Merge to BCG criteria
+
+WY.crit<-merge(WY1, WY.thresh, by=c('Bioregion'))
+head(WY.crit)
+names(WY.crit)
+#View(WY.crit)
+
+#Assign BCG levels
+WY.BCG<-WY.crit %>% 
+  mutate(BCG_proxy=case_when(WSII>Top_half_full_support_Level2 ~ 2,
+                             WSII>= Full_support_Level3threshold & WSII <=Top_half_full_support_Level2 ~ 3,
+                             WSII >= Indeterminate_Level4 & WSII <Full_support_Level3threshold ~ 4,
+                             WSII >= Level5_second_trisection & WSII <Indeterminate_Level4 ~ 5,
+                             WSII < Level5_second_trisection ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select final columns
+  mutate(SiteID=as.character(SiteID))#format SiteID
+#View(WY.BCG)
+
+#look at distribution of scores
+
+#Date range:
+summary(WY.BCG$Date)
+names(WY.BCG)
+
+#Number of unique sites
+WY.BCG %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+
+```
+
+**Nebraska:**
+
+```{r}
+#Nebraska
+
+NE<-read_excel(paste(dir$data_r2, '/NE_Bug.ratings.1979.2022.xlsx', sep=""),  sheet = 'NE_Bug.ratings.1979.2022')
+head(NE)
+names(NE)
+nrow(NE)
+#View(NE)
+
+NE1<-NE %>% 
+  rename(SiteID="Station.ID", Lat="Latitude", Long="Longitude") %>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="NE") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  mutate(BCG_proxy=case_when(BugRating=="Excellent" ~ 2,
+                             BugRating=="Good" ~ 3,
+                             BugRating=="Fair" ~ 4,
+                             BugScore>=10&BugScore<=12 ~ 5,
+                             BugScore<10 ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+#View(NE1)
+
+#Date range:
+summary(NE1$Date)
+names(NE1)
+
+#Number of unique sites
+NE1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+
+```
+
+**USEPA National Data:**
+
+From EPA National Aquatic Resource Surveys. Data is from 2013-2014, and
+2008-2009. More recent data is available for 2018-2018, but it doesn't
+include numeric MMI scores.
+
+Notes:
+
+-   Data from:
+    <https://www.epa.gov/national-aquatic-resource-surveys/data-national-aquatic-resource-surveys>
+
+-   Sites sampled in 2008-2009 are somewhat different than sites sampled
+    in 2013-2014, with some overlap (i.e., not the exact same set of
+    sites. tho some sites were sampled in both surveys). According to
+    the 2013-2014 NRSA report (p. 12) available here:
+    <https://www.epa.gov/system/files/documents/2021-10/nrsa_13-14_report_508_ci_2021-10-15.pdf>
+
+-   Data accessed 8.28.23 (2013-2014 data) and 4.12.24 (2008-2009 data)
+
+```{r}
+#US Scale data 
+
+nrsa<-read.table(paste(dir$data_r2, '/NARS_invert_MMI_2013_2014.csv', sep=""), sep=",", header=TRUE)
+head(nrsa)
+names(nrsa)
+
+#using benthic macroinvertebrate scores to be more consistent with rest of dataset
+#(majority of which is inverts)
+
+class(nrsa$MMI_BENT)
+#look at max score by region
+nrsa %>% 
+  drop_na(MMI_BENT) %>% #remove blank values
+  group_by(AG_ECO9_NM) %>% 
+  summarise(maxMMI=max(MMI_BENT), minMMI=min(MMI_BENT))
+#View(nrsa)
+#clean up nrsa into needed columns only:
+nrsa1<-nrsa %>% 
+  rename(Date="DATE_COL", SiteID="SITE_ID", Lat="LAT_DD83", Long="LON_DD83")%>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%m/%d/%Y")) %>% #format date
+  mutate(State="USA") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>%  #ID taxonomic group
+  select(State, SiteID, Date, Lat, Long, Taxa, MMI_BENT, AG_ECO9_NM) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+head(nrsa1)
+nrow(nrsa1)
+
+
+#load in 'benchmarks' for narrative categories
+#note that 3 categories (good, fair, poor) are defined by USEPA
+#i split 'good' into level 2 and 3
+#i split 'poor' into level 5 and 6
+bench<-read_excel('./EPA_Round_2_data/USEPA_NRSA_MMI_benchmarks.xlsx')
+head(bench)
+names(bench)
+#View(bench)
+
+#Merge benchmarks to MMI:
+
+nrsa.bench<-merge(nrsa1, bench, by=c('AG_ECO9_NM'))
+head(nrsa.bench)
+names(nrsa.bench)
+#View(nrsa.bench)
+
+#assign BCG scores:
+
+nrsa.BCG<-nrsa.bench %>% 
+  mutate(BCG_proxy=case_when(MMI_BENT>=Level_2_benchmark ~ 2,
+                             MMI_BENT>= Good_benchmark_Level_3 & MMI_BENT <Level_2_benchmark ~ 3,
+                             MMI_BENT >= Poor_benchmark & MMI_BENT <Good_benchmark_Level_3 ~ 4,
+                             MMI_BENT >= Level_5_benchmark & MMI_BENT <Poor_benchmark ~ 5,
+                             MMI_BENT < Level_5_benchmark ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select final columns
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+#View(nrsa.BCG)
+
+####################################################################
+##Update 4.12.24
+
+#Adding in additional national data from USEPA NRSA for sampling years 2008-2009
+#2013-2014 was already added above
+
+nrsa2008<-read.table(paste(dir$data_r2, '/NRSA0809_Benthic Macroinvertebrate_MMI.csv', sep=""), sep=",", header=TRUE)
+head(nrsa2008)
+names(nrsa2008)
+
+#using benthic macroinvertebrate scores to be more consistent with rest of dataset
+#(majority of which is inverts)
+
+class(nrsa2008$MMI_BENT)
+#look at max score by region
+nrsa2008 %>% 
+  drop_na(MMI_BENT) %>% #remove blank values
+  group_by(AGGR_ECO9_2015) %>% 
+  summarise(maxMMI=max(MMI_BENT), minMMI=min(MMI_BENT))
+#View(nrsa2008)
+#clean up nrsa into needed columns only:
+nrsa2008_v1<-nrsa2008 %>% 
+  rename(Date="DATE_COL", SiteID="SITE_ID", Lat="LAT_DD83", Long="LON_DD83")%>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%d-%b-%y")) %>% #format date
+  mutate(State="USA") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>%  #ID taxonomic group
+  select(State, SiteID, Date, Lat, Long, Taxa, MMI_BENT, AGGR_ECO9_2015) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+head(nrsa2008_v1)
+nrow(nrsa2008_v1)
+
+
+#'benchmarks' for narrative categories (as above)
+#note that 3 categories (good, fair, poor) are defined by USEPA
+#i split 'good' into level 2 and 3
+#i split 'poor' into level 5 and 6
+
+#Note that "Ecoregion" is the column that matches back to 2008 nrsa column "AGGR_ECO9_2015"
+bench<-bench %>% 
+  rename(AGGR_ECO9_2015=Ecoregion)
+#View(bench)
+
+#Merge benchmarks to MMI:
+
+nrsa.bench_2008<-merge(nrsa2008_v1, bench, by=c('AGGR_ECO9_2015'))
+head(nrsa.bench_2008)
+names(nrsa.bench_2008)
+#View(nrsa.bench_2008)
+
+#assign BCG scores:
+
+nrsa.BCG_2008<-nrsa.bench_2008 %>% 
+  mutate(BCG_proxy=case_when(MMI_BENT>=Level_2_benchmark ~ 2,
+                             MMI_BENT>= Good_benchmark_Level_3 & MMI_BENT <Level_2_benchmark ~ 3,
+                             MMI_BENT >= Poor_benchmark & MMI_BENT <Good_benchmark_Level_3 ~ 4,
+                             MMI_BENT >= Level_5_benchmark & MMI_BENT <Poor_benchmark ~ 5,
+                             MMI_BENT < Level_5_benchmark ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select final columns
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+#View(nrsa.BCG_2008)
+
+#write to file
+write.table(nrsa.BCG_2008, paste(dir$output, "/USEPA_NRSA_2008_BCG.csv", sep=""), sep=",", row.names=FALSE)
+
+
+#Check number of unique sites
+rbind(nrsa.BCG, nrsa.BCG_2008) %>% group_by(SiteID) %>% dplyr::select(SiteID) %>% distinct() %>% count()
+
+```
+
+**Arizona:**
+
+```{r}
+#Arizona
+
+az<-read.table(paste(dir$data_r2, '/AZDEQ_IBIscores_1992to2022_20240104.csv', sep=""), sep=",", header=TRUE)
+head(az)
+names(az)
+nrow(az)
+#View(az)
+
+#Note separate IBI score thresholds for warmwater vs coldwater
+
+az1<-az %>% 
+  rename(Type="w_or_c", Date="CollDate", SiteID="StationID", Lat="LATITUDE_DECDEG", Long="LONGITUDE_DECDEG") %>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="AZ") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  mutate(BCG_proxy=case_when(Type=="Warm" & IBI>=75 ~ 2,
+                             Type=="Cold" & IBI>=76 ~ 2,
+                             Type=="Warm" & IBI>=50 & IBI <75 ~ 3,
+                             Type=="Cold" & IBI>=52 & IBI <76 ~ 3,
+                             Type=="Warm" & IBI>=40 & IBI <50 ~ 4,
+                             Type=="Cold" & IBI>=46 & IBI <52 ~ 4,
+                             Type=="Warm" & IBI>=19.5 & IBI <40 ~ 5,
+                             Type=="Cold" & IBI>=22.5 & IBI <46 ~ 5,
+                             Type=="Warm" & IBI <19.5 ~ 6,
+                             Type=="Cold" & IBI <22.5 ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+nrow(az1)
+
+#View(az1)
+
+#Date range:
+summary(az1$Date)
+names(az1)
+
+#Number of unique sites
+az1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+
+```
+
+**Florida**
+
+Notes:
+
+-   about 1/3 of the rows are for 'TMDL studies'. This indicates these
+    are likely impaired?
+
+```{r}
+
+#Florida
+
+Florida<-read_excel(paste(dir$data_r2, '/FL_SCI_2012_scores.xlsx',sep=""), sheet="SCI_2012_scores")
+head(Florida)
+names(Florida)
+nrow(Florida)
+#View(Florida)
+
+summary(as.numeric(Florida$'SCI_2012 RESULT'))
+
+Florida1<-Florida %>% 
+  rename(Date="SAMPLE DATE", SiteID="WIN/STORET", Lat="LATITUDE", Long="LONGITUDE", SCI="SCI_2012 RESULT") %>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="FL") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  filter(!is.na(SCI)) %>%
+  filter(!SCI=="NULL") %>% 
+  mutate(SCI=as.numeric(SCI)) %>% #specify numeric
+  mutate(BCG_proxy=case_when(SCI>=64 ~ 2,
+                             SCI>=42 & SCI <64 ~ 3,
+                             SCI >=35 & SCI <42 ~ 4,
+                             SCI >=20 & SCI <35 ~ 5,
+                             SCI < 20 ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+nrow(Florida1)
+
+summary(Florida1$BCG_proxy)
+
+#Check Florida data
+FL_sf<-st_as_sf(Florida1, coords=c("Long", "Lat"))
+plot(FL_sf["BCG_proxy"])
+
+#Count number of unique sites in FL:
+
+Florida1 %>% filter(Date>"01-01-2000") %>% group_by(SiteID) %>% count()
+
+#View(Florida1)
+
+#Date range:
+summary(Florida1$Date)
+names(Florida1)
+
+#Number of unique sites
+Florida1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+
+```
+
+**Connecticut:**
+
+Notes:
+
+-   CT only has Year and not Date, so assigned dummy date based on year
+
+```{r}
+#Connecticut
+
+#read in CT site locations
+CT_sites<-read_excel(paste(dir$data_r2, "/CT_sitesDB_050522.xlsx", sep=""))
+head(CT_sites)
+
+#read in CT BCG scores:
+CT_scores<-read.csv("./EPA_Round_2_data/CT_BCG_Bioassessments_2022_050522.csv")
+head(CT_scores)
+nrow(CT_scores)
+
+#Merge BCG scores to site locations
+CT_all<-merge(CT_sites, CT_scores, by=c("STA_SEQ"))
+nrow(CT_all)
+
+head(CT_all)
+
+#both fish and bug BCG available: 
+levels(factor(CT_all$METRIC))
+
+names(CT_all)
+
+#Note dummy dates are assigned; if multiple samples were collected in one year, they are
+#assigned different dates (ie, 8/1 vs 8/2 of a given year)
+
+CT1<-CT_all %>%
+  filter(METRIC=="BUG_BCG") %>% #restrict just to bug BCG
+  #rename columns: 
+  rename(SiteID=Station_Name, BCG_proxy=METRIC_VALUE, Year=SAMPLE_YEAR, Lat=YLat, Long=XLong) %>%
+  mutate(Taxa="Macroinvertebrates", State="CT") %>% 
+  #assign dummy date since you only have year:
+  group_by(SiteID, Year) %>% 
+  mutate(DummyDate = (paste(Year, "08", row_number(), sep = "-"))) %>% 
+  mutate(DummyDate=as.Date(DummyDate, format="%Y-%m-%d")) %>% 
+  ungroup() %>% 
+  rename(Date=DummyDate) %>%  #rename Date column
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) #select variables we need
+  
+#Check Connecticut data
+CT_sf<-st_as_sf(CT1, coords=c("Long", "Lat"), crs=4269)
+plot(CT_sf["BCG_proxy"])
+st_crs(CT_sf)
+
+
+#Count number of unique sites in FL:
+
+CT1 %>% filter(Date>"01-01-2000") %>% group_by(SiteID) %>% count()
+
+#View(CT1)
+
+summary(CT1$Date)
+names(CT1)
+
+#Number of unique sites
+CT1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+
+```
+
+#### North Carolina
+
+-update 5.14.25
+
+-adding in new data that was retrieved from public data repository since
+round 1 of EPA project
+
+```{r}
+
+nc<-read.csv(paste(dir$data_r2, '/NC_macroinvertebrate_ratings_10_10_23_clean.csv', sep=""))
+head(nc)
+nrow(nc)
+names(nc)
+#View(nc)
+
+levels(factor(nc$Latest.Rating))
+
+nc1<-nc %>% 
+  rename(SiteID="Site.ID", Lat="Latitude", Long="Longitude") %>% #make column names consistent across datasets
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>% #format date
+  mutate(State="NC") %>% #make state ID
+  mutate(Taxa="Macroinvertebrates") %>% #ID taxonomic group
+  mutate(BCG_proxy=case_when(Latest.Rating=="Natural" ~ 1,
+                             Latest.Rating=="Excellent" ~ 2,
+                             Latest.Rating=="Good" ~ 3,
+                             Latest.Rating=="Good-Fair" ~ 4,
+                             Latest.Rating=="Moderate" ~ 4,
+                             Latest.Rating=="Fair" ~ 4,
+                             Latest.Rating=="Poor" ~ 5,
+                             Latest.Rating=="Severe" ~ 6)) %>% #Assign BCG scores 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy) %>%  #select variables we need
+  mutate(SiteID=as.character(SiteID)) #format SiteID
+nrow(nc1)
+
+#View(nc1)
+
+#Date range:
+summary(nc1$Date)
+names(nc1)
+
+#Number of unique sites
+nc1 %>% group_by(SiteID) %>% 
+  select(SiteID) %>% 
+  distinct() %>% 
+  count()
+```
+
+# Compile all BCG scores into one document
+
+```{r}
+BCG.all<-rbind(
+  nc1,
+  CT1,
+  ches1,
+  ny1,
+  ga1,
+  tx.all,
+  ca1,
+  Idaho1,
+  OR1,
+  WY.BCG,
+  NE1,
+  nrsa.BCG,
+  az1,
+  Florida1,
+  nrsa.BCG_2008)
+nrow(BCG.all)
+head(BCG.all)
+
+#View(BCG.all)
+
+#write EPA Round 2 data to table (if desired)
+write_xlsx(BCG.all, paste(dir$output, "/EPA_Round2_BCG_data_allsamples.xlsx", sep=""), col_names=TRUE)
+```
+
+## Merge EPA Rounds 1 and 2 data
+
+```{r}
+#read in data (if needed; this is the same data generated above):
+
+EPA1<-read_excel(paste(dir$output, '/EPA_Round1_BCG_data_allsamples.xlsx', sep=""))
+names(EPA1)
+nrow(EPA1)
+
+
+#read in data for EPA Project round 2 if needed:
+#Or set to data above
+EPA2<-read_excel(paste(dir$output, '/EPA_Round2_BCG_data_allsamples.xlsx', sep=""))
+names(EPA2)
+nrow(EPA2)
+
+
+#combine the two datasets:
+#because added new North Carolina data for round 2, exclude it from round 1:
+EPA.all<-rbind(EPA1 %>% filter(!State=="NC"), EPA2)
+
+#Look at blank values for BCG
+View(EPA.all %>% filter(is.na(BCG_proxy)))
+
+EPA.all<-EPA.all %>% 
+  filter(!is.na(BCG_proxy)) %>% #remove blank values for BCG
+  mutate(Date=as.Date(Date, format="%Y-%m-%d")) %>%  #format date if loaded in data anew from excel
+  filter(!is.na(Date))#remove remaining missing dates
+nrow(EPA.all)
+
+nrow(EPA1) + nrow(EPA2)
+
+#Date range for all data
+summary(EPA.all$Date)
+
+########################################################
+#write data to file
+#this is all BCG data for all sites
+#NOTE: this includes repeat samples for some sites
+#NOTE: some sites may have been sampled by more than one agency, be aware of redundant samples
+#(ie, collected on the same date)
+
+write_xlsx(EPA.all, paste(dir$output, "/EPA_BCG_data_allsamples_ALLROUNDS.xlsx", sep=""), col_names=TRUE)
+```
+
+# Create shapefile of BCG locations
+
+First remove sites with missing coordinates
+
+```{r}
+EPA.all.sf<-st_as_sf(EPA.all %>% remove_missing(vars=c("Long", "Lat")), coords=c("Long", "Lat"))
+
+#Set coordinate reference system to NAD83
+st_crs(EPA.all.sf) = 4269 #set crs to NAD83
+
+#Quick plot to check data
+plot(EPA.all.sf["BCG_proxy"])
+
+```
+
+# Merge BCG locations to attributes: NHD COMID and HUC IDs
+
+The NHD is the National Hydrography Database. It shows all stream
+reaches in the US. Each stream reach has a unique ID (COMID). These IDs
+can be used to join to geospatial attributes in the EPA StreamCat
+dataset
+
+## Merge to NHD COMID:
+
+### Download NHD flowlines for the study area using nhdplusTools
+
+Note: this will take a long time - an hour or more
+
+```{r}
+#Draw bounding box around BCG sampling points, including a 100m buffer around points and create a polygon for area of interst 
+
+bbp = st_as_sfc(st_bbox(EPA.all.sf))
+st_crs(bbp) #check coordiante system 
+
+#Check the study area: 
+
+tm_shape(bbp)+
+  tm_borders+
+  tm_shape(EPA.all.sf)+
+  tm_dots()
+
+NHD <- get_nhdplus(AOI = bbp,  realization = "flowline")
+names(NHD)
+st_crs(NHD) #check coordinate reference
+
+#Put BCG in same reference system if needed 
+EPA_transform<-st_transform(EPA.all.sf, crs=st_crs(NHD))
+
+View(EPA_transform %>% filter(State=="CT"|State=="IA"))
+
+levels(factor(EPA_transform$State))
+
+# Spatial join to link points to attributes of neareset flowline
+#Keep only needed NHD attributes 
+
+start.time<-Sys.time()
+start.time
+EPA.NHD2 <- st_join(EPA_transform, 
+                   NHD %>% select(comid, gnis_id, gnis_name, lengthkm, reachcode, ftype, fcode, streamleve, streamorde),
+          join = st_nearest_feature)
+end.time<-Sys.time()
+total.time<-end.time-start.time
+total.time #51 minutes
+
+names(EPA.NHD2)
+#check number or records
+nrow(EPA_transform)
+nrow(EPA.NHD2)
+
+View(head(EPA.NHD2))
+
+#write intermediate file
+st_write(EPA.NHD2, paste(spatial_dir, "/EPA_BCG_allsamples_ALLROUNDS_NHDCOMID.shp", sep=""), col_names = TRUE, append=FALSE)
+
+#Check for empty COMID values
+EPA.NHD2 %>% filter(is.na(comid)) %>% count()
+
+```
+
+## Merge to HUC12 ID
+
+Download WBD for the entire nation:
+
+<https://www.usgs.gov/national-hydrography/access-national-hydrography-products>
+
+Accessed and downloaded 4.17.25
+
+Exported HUC12 shapefile in ArcGIS Pro to BCG geodatabase
+
+**#To do: move this geodatabase internal to BCG R Project folder, and
+clean up to include only relevant files**
+
+### Load in HUC12 data:
+
+```{r}
+
+#If necessary, read in BCG locations previously joined to NHD COMID attributes:
+EPA.NHD2<-st_read(paste(spatial_dir,"/EPA_BCG_allsamples_ALLROUNDS_NHDCOMID.shp", sep=""))
+names(EPA.NHD2)
+
+HUC12<-st_read(dsn = paste(dir$data_huc, '/HUC_spatial_data.gdb',sep=""), layer = "HUC12")
+st_crs(HUC12)
+
+names(HUC12)
+View(head(HUC12))
+
+
+
+```
+
+### Merge BCG locations to HUC12 IDs:
+
+```{r}
+
+#check reference systems of both datasets
+st_crs(HUC12)
+st_crs(EPA.NHD2)
+
+#transform to same crs:
+HUC12_transform<-st_transform(HUC12, crs=st_crs(EPA.NHD2))
+
+#Make valid geometry:
+HUC12_valid<-st_make_valid(HUC12_transform)
+
+#Merge HUC12 attributes to BCG locations
+start.time2<-Sys.time()
+start.time2
+
+EPA.NHD.HUC12 <- st_join(EPA.NHD2 %>% filter(!is.na(comid)), 
+                    HUC12_valid %>% select(huc12, name, areasqkm))
+
+end.time2<-Sys.time()
+total.time2<-end.time2-start.time2
+total.time2
+
+nrow(EPA.NHD.HUC12) #check number of rows
+
+names(EPA.NHD.HUC12)
+
+
+#Write intermediate data to file
+st_write(EPA.NHD.HUC12, paste(spatial_dir, "/EPA_BCG_allsamples_ALLROUNDS_NHDCOMID_HUC12.shp", sep=""), col_names = TRUE, append=FALSE)
+
+names(EPA.NHD.HUC12)
+
+plot(EPA.NHD.HUC12["BCG_proxy"])
+```
+
+# Clean up the compiled data
+
+Include only needed columns
+
+Create other HUC ID columns if needed
+
+Add lat/long back in as columns
+
+```{r}
+
+#read in intermediate file if needed:
+EPA.NHD.HUC12<-st_read(paste(spatial_dir, "/EPA_BCG_allsamples_ALLROUNDS_NHDCOMID_HUC12.shp", sep=""))
+names(EPA.NHD.HUC12)
+
+Sys.time()
+
+#Add coordinates back in as columns
+coord_df <- EPA.NHD.HUC12 %>% 
+    st_coordinates() %>%
+    dplyr::as_tibble() %>%
+    dplyr::select(X, Y) %>%
+    dplyr::rename(Long = X, Lat = Y)
+
+head(coord_df)
+
+BCG_clean<-EPA.NHD.HUC12 %>% 
+  st_drop_geometry() %>%
+  dplyr::bind_cols(coord_df) %>%  
+  mutate(HUC8=str_sub(huc12,1,8)) %>% 
+  mutate(HUC4=str_sub(huc12, 1, 4)) %>% 
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy, HUC8, name,
+          areasqkm, comid, gnis_id, gnis_name, lengthkm, reachcode, ftype, fcode, streamleve,
+          streamorde, HUC4, HUC8, huc12)
+
+head(BCG_clean)
+
+#Write updated data to table:
+write.csv(BCG_clean, paste(dir$output, "/EPA_BCG_allsamples_ALLROUNDS_HUC8ID_NHDCOMID_clean_HUC12.csv", sep=""),
+          row.names=FALSE)
+```

@@ -1,0 +1,377 @@
+---
+title: "Initial_BCG_data_QC"
+author: "Christy Dolph"
+date: "2025-04-25"
+output: html_document
+---
+
+# Overview: Preliminary Data Quality Checks
+
+This script checks for obvious QC issues in the BCG dataset and generates a finalized data set for use in further analysis.
+
+QC Issues include:
+
+-   NA values
+
+-   Creating additional identifiers
+
+-   Adding flags for sites sampled by multiple agencies and/or multiple times in the same time period (year, month & year, exact same date)
+
+-   Omit samples collected in winter (December, January, February) which are outside of typical range during which biotic condition is assessed
+
+-   Calculate average BCG scores for sites sampled multiple times in one year, whether they were sampled either by multiple agencies or the same agency. Note that some of this duplication is because some state datasets were also included in the regional Chesapeake dataset
+
+# Set Up Workspace
+
+Clean up workspace and load packages (or install packages if necessary)
+
+```{r, setup, include =FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list=ls())
+want <- c("data.table", "fixest", "tidyverse", "tidylog", "readxl", "lubridate", "rmarkdown", "writexl", "sf", "mapview", "xtable", "pals", "tmap", "maps", "gridExtra", "ffmpeg", "magick", "animation", "geosphere", "nhdplusTools", "knitr")
+   
+
+need <- want[!(want %in% installed.packages()[,"Package"])]
+if (length(need)) install.packages(need)
+lapply(want, function(i) require(i, character.only=TRUE))
+rm(want, need)
+```
+
+Set Up Working directories:
+
+```{r, Create list of directories}
+dir <- list()
+
+#Main directory: 
+dir$root <- getwd()
+
+#Directory for loading data from EPA Project Round 1:
+dir$data_r1 <- paste(dir$root, "/EPA_Round_1_data", sep = "")
+#Directory for loading data from EPA Project Round 2:
+dir$data_r2 <- paste(dir$root, "/EPA_Round_2_data", sep = "")
+#Directory for spatial data: 
+spatial_dir<-paste(dir$root, "/Spatial_data", sep="")
+#Directory with HUC shapefiles: 
+dir$data_huc  <- paste(dir$root, "/Spatial_data/HUC_spatial_data", sep = "")
+#Output directory for most data: 
+dir$output<-paste(dir$root, "/BCG_output", sep="")
+```
+
+Create user-defined functions:
+
+```{r}
+# Sets up user defined functions for subsequent workflow.
+
+# Not In Function --------------------------------------------------------------
+#returns values NOT in a defined list/vector
+
+`%notin%` = Negate(`%in%`)
+
+
+# Distance Function ------------------------------------------------------------
+#calculates the distances in degrees between any two sites
+
+deg_dist<- function(x,y){
+  a=data$Lat[data$LatLong_ID==x] - data$Lat[data$LatLong_ID==y]
+  b=data$Long[data$LatLong_ID==x] - data$Long[data$LatLong_ID==y]
+  unique(sqrt(a^2+b^2))
+}
+```
+
+# 1). Load Data Files
+
+```{r}
+data <- read_csv(paste(dir$output, "/EPA_BCG_allsamples_ALLROUNDS_HUC8ID_NHDCOMID_clean_HUC12.csv", sep = ""))
+setDT(data)
+```
+
+# 2). General QC Checks -----
+
+```{r}
+#Check for NA values
+colSums(is.na(data))
+
+#remove observations with NA values for Lat & Long
+data <- data[!is.na(data$Lat) & !is.na(data$Long),]
+
+#Break out year, month, day
+data$Date<-as.Date(data$Date, format="%m-%d%Y")
+summary(data$Date)
+
+data$month <- as.numeric(format(data$Date,  "%m"))
+data$day <- as.numeric(format(data$Date,  "%d"))
+data$year <- as.numeric(format(data$Date, "%Y"))
+
+head(data)
+
+#Break out the huc2 regions 
+data$huc2 <-as.numeric(substr(data$HUC8, 1, nchar(data$HUC8)-6))
+
+huc2_names <- cbind(unique(data$huc2[order(data$huc2)]),
+                    as.data.frame(c("New England", "Mid-Atlantic", "South Atlantic Gulf", 
+                                    "Great Lakes", "Ohio", "Tennessee", "Upper Mississippi", 
+                                    "Lower Mississippi", "souris Red Rainy", "Missouri", 
+                                    "Arkandas-White-Red", "Texas-Gulf", "'Rio Grande", 
+                                    "Upper Colorado","Lower Colorado", "Great Basin", "Pacific-Northwest", "California")))
+colnames(huc2_names) <- c("huc2", "huc2name")
+
+head(data)
+
+data <- merge(data, huc2_names, by="huc2", all.x=FALSE)
+
+#Data Identifiers
+data[, Row_ID:=.I] #row id
+data[, LatLong_ID:= .GRP, by = .(Lat, Long)] #unique site id based on location only (does not account for NA values in GA)
+data[, State_Site_ID:= .GRP, by= .(Lat, Long, State)] #unique site id based on location and agency (fills in NA values for NE)
+
+data[,count_sample:=uniqueN(Row_ID), by=.(LatLong_ID)] #number of times this location is sampled
+data[,count_agency:=uniqueN(State), by=.(LatLong_ID)] #number of agencies sampling this location 
+
+epa_list <- unique(data$LatLong_ID[data$State=="USA"]) #list of EPA sites
+data[, epa_site:=0]
+data[LatLong_ID %in% epa_list, epa_site:=1] #dummy variable indicating if this location was sampled by the EPA
+
+cp_list <- unique(data$LatLong_ID[data$State=="Chesapeake"]) #list of Chesapeake sites
+data[, cp_site:=0]
+data[LatLong_ID %in% cp_list, cp_site:=1] #dummy variable indicating if this location was sampled by Chesapeake
+```
+
+# 3.) Sites sampled by multiple agencies
+
+```{r}
+#number of times a site is sampled in a given year
+data <- data[, year_count:=uniqueN(Row_ID), by=.(LatLong_ID, year)][order(-year_count, LatLong_ID)] 
+head(data)
+
+#identify the sites with multi-sampling issues
+multi_sample_sites <- data[year_count>1,]
+multi_sample_sites[, bcg_annual_range:=max(BCG_proxy)-min(BCG_proxy), by=.(SiteID, year)]
+write_xlsx(multi_sample_sites, path = paste(dir$output, "/multi_sample_sites.xlsx", sep=""))
+
+
+```
+
+Visual and table analysis showing sites sampled by multiple agencies:
+
+(Note: writing these plots to file isn't working right now and needs to be updated)
+
+```{r}
+#visual analysis
+
+p1 <- barplot(table(multi_sample_sites$year_count),
+              main = "Same Site & Year: Sample Frequency",
+              xlab = "Annual Sample Frequency",
+              ylab = "# Obs",
+              ylim = c(0, 20000))
+text(x = c(0.5, 2, 3, 4.25, 5.5, 6.75, 8, 9, 10.25, 11.5,  12.75, 14, 15.25, 16.25, 17.5, 18.5),
+     y=table(multi_sample_sites$year_count),
+     label = table(multi_sample_sites$year_count), 
+     pos = 3, cex = 1, col = "red")
+p1
+
+png(paste(dir$output,"/graphics/multi_sample_sites_obs_year.png", sep = ""),         
+    width=600,
+    height=400) 
+p1
+dev.off()
+
+
+
+png(paste(dir$output,"/graphics","/multi_sample_sites_yr_score_range.png", sep = ""),         
+    width=600,
+    height=400) 
+p2 <- barplot(table(multi_sample_sites$bcg_annual_range),
+              main = "Same Site & Year: BCG Score Range",
+              xlab = "Score Range",
+              ylab = "# Obs",
+              ylim = c(0, 15000))
+text(x = c(0.5, 2, 3, 4.25, 5.5, 6.75, 8),
+     y=table(multi_sample_sites$bcg_annual_range),
+     label = table(multi_sample_sites$bcg_annual_range), 
+     pos = 3, cex = 1, col = "red")
+dev.off()
+
+
+
+```
+
+Multi site table:
+
+```{r}
+#table
+agencies<- unique(data$State[order(data$State)])
+data <- data[][order(data$State)]
+multi_sample_sites <- multi_sample_sites[][order(multi_sample_sites$State)]
+
+
+total_sites <- vector(mode = "character", length = length(agencies))
+problem_sites<- vector(mode = "character", length = length(agencies))
+total_problem_obs <- vector(mode = "numeric", length = length(agencies))
+
+max_sampled <- vector(mode = "numeric", length = length(agencies))       #maximum sample count in any given year
+median_sampled <- vector(mode = "numeric", length = length(agencies))    #median sample count in any given year
+
+max_bcg_range <- vector(mode = "numeric", length = length(agencies))     #maximum bcg score range across years
+med_bcg_range <- vector(mode = "numeric", length = length(agencies))     #median bcg score range across years
+range_zero_obs <- vector(mode = "numeric", length = length(agencies))    #count of obs with no difference in score under same year multi-sampling
+range_zero_sites <- vector(mode = "numeric", length = length(agencies))  #count of sites with no difference in score under same year multi-sampling
+
+total_obs <- vector(mode = "numeric", length = length(agencies))
+loss_ratio <- vector(mode = "numeric", length = length(agencies)) 
+potential_data_loss <- vector(mode = "numeric", length = length(agencies))   #data lost if we  remove all obs with score range > 0 
+
+for (i in 1:length(agencies)){
+  total_sites[i] <- length(unique(data$LatLong_ID[data$State==agencies[i]]))
+  problem_sites[i] <- length(unique(multi_sample_sites$LatLong_ID[multi_sample_sites$State==agencies[i]]))
+  total_problem_obs[i] <- length(unique(multi_sample_sites$Row_ID[multi_sample_sites$State==agencies[i]]))
+  
+  max_sampled[i] <- max(multi_sample_sites[State==agencies[i], year_count])
+  median_sampled[i] <- median(multi_sample_sites[State==agencies[i], year_count])
+  
+  max_bcg_range[i] <- max(multi_sample_sites[State==agencies[i], bcg_annual_range])
+  med_bcg_range[i] <- median(multi_sample_sites[State==agencies[i], bcg_annual_range])
+  range_zero_obs[i] <- length(unique(multi_sample_sites$Row_ID[multi_sample_sites$State==agencies[i] & multi_sample_sites$bcg_annual_range==0]))
+  range_zero_sites[i] <- length(unique(multi_sample_sites$SiteID[multi_sample_sites$State==agencies[i] & multi_sample_sites$bcg_annual_range==0]))
+  
+  total_obs[i] <- length(unique(data$Row_ID[data$State==agencies[i]]))
+  loss_ratio[i] <- round(1-((total_obs[i]-total_problem_obs[i]+range_zero_sites[i])/total_obs[i]), 2)
+  potential_data_loss[i] <- round(total_obs[i]*loss_ratio[i], 0)
+  
+  
+ multi_sample_summary_tbl <- cbind(agencies, 
+                               total_sites, problem_sites, total_obs, total_problem_obs,
+                               loss_ratio, potential_data_loss,
+                               max_sampled, median_sampled, 
+                               max_bcg_range, med_bcg_range, range_zero_sites, range_zero_obs)
+  
+ multi_sample_summary_tbl<- as.data.frame(multi_sample_summary_tbl)
+  
+ setDT(multi_sample_summary_tbl)
+ multi_sample_summary_tbl[][order(-agencies)]
+  
+}
+
+View(multi_sample_summary_tbl)
+
+print(xtable(multi_sample_summary_tbl, type = "latex"), file = paste(dir$output,"/tables", "/multi_sample_summary_tbl.tex", sep = ""))
+
+
+#Add flags for multi-sampled sites
+data <- data[year_count>1, multi_sample_yr:=1]                                  #this site was sampled more than once in this year                    
+
+data <- data[, mnth_count:=uniqueN(Row_ID), by=.(month, year, LatLong_ID)]      #this site was sampled more than once in this month of this year
+data <- data[mnth_count>1, multi_sample_mnth:=1]                                
+
+data <- data[, date_count:=uniqueN(Row_ID), by=.(Date, LatLong_ID)]             #this site was sampled more than once on this exact date 
+data <- data[date_count>1, multi_sample_date:=1]                                     
+
+data  <- data[year_count>1 & count_agency==1, same_agency_multi_sample_yr:=1]   #the same-year multi-sampling of this site was done by one agency  
+data  <- data[mnth_count>1 & count_agency==1, same_agency_multi_sample_mnth:=1] #the same month-year multi-sampling of this site was done by one agency                       
+data  <- data[date_count>1 & count_agency==1, same_agency_multi_sample_date:=1] #the same date multi-sampling of this site was done by one agency                     
+
+data[,c("multi_sample_yr", "multi_sample_mnth", "multi_sample_date", "same_agency_multi_sample_yr", "same_agency_multi_sample_mnth", "same_agency_multi_sample_date")][is.na(data[,c("multi_sample_yr", "multi_sample_mnth", "multi_sample_date", "same_agency_multi_sample_yr", "same_agency_multi_sample_mnth", "same_agency_multi_sample_date")])] <- 0
+
+```
+
+# 4.) Generate Clean Tables For Analysis
+
+```{r}
+#Clean dataset: All Purpose
+names(data)
+
+data <- data[,.(Row_ID, State, epa_site, cp_site, SiteID, State_Site_ID, Date, year, month, day, 
+        Lat, Long, LatLong_ID, HUC8, huc2, huc2name, streamleve, streamorde,
+        comid, name, gnis_id, gnis_name, areasqkm, 
+        reachcode, ftype, fcode, 
+        count_sample, count_agency, year_count, mnth_count, date_count,
+        multi_sample_yr, multi_sample_mnth, multi_sample_date, 
+        same_agency_multi_sample_yr, same_agency_multi_sample_mnth, same_agency_multi_sample_date,
+        Taxa, BCG_proxy)]
+
+write_xlsx(data, path =  paste(dir$output, "/bcg_data_general.xlsx", sep=""))
+
+nrow(data)
+```
+
+# 5.) Further Data Cleaning
+
+-   Omit samples collected in winter (December, January, February) (i.e., outside of typical range during which biotic condition is assessed)
+
+-   Calculate average BCG scores for sites sampled multiple times in one year, whether they were sampled either by multiple agencies or the same agency
+
+-   Note that some of this duplication is because some state datasets were also included in the regional Chesapeake dataset
+
+-   Also calculate min and max BCG score in a given year
+
+```{r}
+#Clean dataset - Filtered to 1 Obs per Site per Year
+#REVISED 4.1.25 by Christy Dolph
+
+#rename columns to match script below
+data<-data %>% 
+  rename(COMID=comid)
+
+names(data)
+
+#Drop NAs for COMID
+data<-data %>% filter(!is.na(COMID))
+nrow(data)
+
+#Look at date range for all sites
+summary(data$Date)
+
+#Look at months during which samples were collected
+data %>% group_by(month) %>% count()
+
+#Omit samples collected in winter (December, January, February)
+#(i.e., outside of typical range during which biotic condition is assessed)
+nrow(data)
+data.nowinter<-data %>% filter(!month %in% c(1,2,12))
+nrow(data.nowinter)
+
+#Calculate average BCG scores for sites sampled multiple times in one year, 
+#whether they were sampled either by multiple agencies or the same agency
+#Note that some of this duplication is because some state datasets were also included
+#in the regional Chesapeake dataset 
+
+#Also calculate min and max BCG score in a given year
+
+bcg_filtered_1<-data.nowinter %>% 
+  group_by(LatLong_ID, year) %>% 
+  #group_by(State_Site_ID, year) %>% 
+  summarise(BCG_yearly_avg=mean(BCG_proxy), n=n(), min_BCG_yearly=min(BCG_proxy),
+            max_BCG_yearly=max(BCG_proxy)) %>% 
+  mutate(BCG_range_yearly=max_BCG_yearly-min_BCG_yearly)
+
+#Look at sites with >1 sample collected per year
+#and BCG scores differing by >2 points
+View(bcg_filtered_1 %>% filter(n>1 & BCG_range_yearly>2))
+#relatively few number of sites meet these criteria 
+
+#Check number of sites once multiple samples per year were averaged
+nrow(bcg_filtered_1)
+
+#Merge sites back to attributes
+bcg_filtered_att<-merge(bcg_filtered_1, 
+                        data %>% dplyr::select(LatLong_ID, 
+                                               Lat, Long, HUC8, huc2,
+                                               huc2name, streamleve, streamorde, COMID,
+                                               reachcode, ftype, fcode, Taxa) %>% 
+                          distinct(),
+by=c("LatLong_ID"))
+
+nrow(bcg_filtered_att) #This number should match number of rows prior to attribute merge
+
+#View(head(bcg_filtered_att))
+
+names(bcg_filtered_att)
+
+#Check for any remaining duplicate lat/longs (should be 0)
+View(bcg_filtered_att %>% group_by(LatLong_ID, year) %>% filter(n()>1))
+
+
+#Write filtered data to file: 
+write_xlsx(bcg_filtered_att, path =  paste(dir$output, "/bcg_data_filtered.xlsx", sep=""))
+
+```

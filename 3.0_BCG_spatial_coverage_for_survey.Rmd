@@ -1,0 +1,473 @@
+---
+title: "2.0 BCG spatial coverage for survey"
+author: "Christy Dolph"
+date: "2025-04-01"
+output: html_document
+---
+
+# Overview
+
+This script creates spatial layers and maps of Biological Condition Gradient (BCG) data for use in the EPA Round 2 Project survey.
+
+BCG data was assembled and BCG proxies were previously assigned by Christy Dolph using script 'BCG_proxy_conversion.Rmd'
+
+BCG data was previously cleaned and processed by Virginia Callison and Christy Dolph using script '2.0_Initial_BCG_data_QC.Rmd'.
+
+Authors and contributors:
+
+VC = Virginia Callison
+
+CLD = Christy Dolph
+
+# Workspace Setup
+
+```{r, setup, include =FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Clean up workspace and load or install packages if necessary
+rm(list=ls())
+want <- c("data.table", "fixest", "tidyverse", "tidylog", "readxl", "lubridate", "rmarkdown", "writexl", "sf", "mapview", "xtable", "pals", "tmap", "maps", "gridExtra", "ffmpeg", "magick", "animation", "geosphere", "tigris")
+need <- want[!(want %in% installed.packages()[,"Package"])]
+if (length(need)) install.packages(need)
+lapply(want, function(i) require(i, character.only=TRUE))
+rm(want, need)
+```
+
+Set up working directories:
+
+```{r, Create list of directories}
+dir <- list()
+
+#Main directory: 
+dir$root <- getwd()
+
+#Directory for loading data from EPA Project Round 1:
+dir$data_r1 <- paste(dir$root, "/EPA_Round_1_data", sep = "")
+#Directory for loading data from EPA Project Round 2:
+dir$data_r2 <- paste(dir$root, "/EPA_Round_2_data", sep = "")
+#Directory for spatial data: 
+dir$spatial_dir<-paste(dir$root, "/Spatial_data", sep="")
+#Directory with HUC shapefiles: 
+dir$data_huc  <- paste(dir$root, "/Spatial_data/HUC_spatial_data", sep = "")
+#Output directory for most data: 
+dir$output<-paste(dir$root, "/BCG_output", sep="")
+
+```
+
+# Load pre-processed BCG data:
+
+This BCG data has had the following pre-processing:
+
+-   Assembled from state, regional, and federal agencies by VC and CLD
+
+-   Biological index scores converted to BCG "proxy" by CLD (see script: "BCG_conversion_script.R")
+
+-   BCG sample locations merged to WBD and NHD attributes by CLD (see script "BCG_spatial_analysis_script.R")
+
+-   Additional pre-processing by VC and CLD (see script "0.1_qc_REVISED.R"):
+
+    -   Filtered to 1 Observation per Site per Year
+
+    -   Sites that were sampled multiple times per year were averaged to create an average BCG score per year
+
+```{r}
+#Read in pre-processed data: 
+
+bcg_data_filtered<-read_xlsx(paste(dir$output,
+"/bcg_data_filtered.xlsx", sep=""))
+
+head(bcg_data_filtered)
+nrow(bcg_data_filtered)
+names(bcg_data_filtered)
+#View(bcg_data_filtered)
+```
+
+## Additional Data Processing:
+
+-   Select only most recent year for each site
+
+-   Select data only post 2000
+
+-   Format HUC IDs
+
+```{r}
+
+#Select most recent year sampled for each site 
+Recent<-bcg_data_filtered %>%  
+  group_by(LatLong_ID) %>%
+  slice(which.max(year)) %>% #select most recent year for each site
+  ungroup() 
+nrow(Recent)  
+
+#Look at date range for most recent samples
+summary(Recent$year) #note this includes some old samples
+#restrict to since 2000
+
+Recent<-Recent %>% 
+  filter(year>2000)
+
+View(head(Recent))
+
+#Check HUC8 IDs for leading zero 
+levels(factor(Recent$HUC8)) 
+
+nrow(Recent)
+names(Recent)
+write_xlsx(Recent, path =  paste(dir$output, "/bcg_most_recent_since2000.xlsx", sep=""))
+
+```
+
+Calculate average BCG by HUC8
+
+```{r}
+#calculate average BCG by HUC8 (since 2000)
+names(Recent)
+
+HUC8.avg<-Recent %>% 
+  #mutate(HUC8=sprintf("%08.0f", (HUC8)) %>% #NOTE: only include if need to add leading zero for IDs to get 8 digit ID 
+  group_by(HUC8) %>% 
+  summarize(BCG_avg=mean(BCG_yearly_avg), n=n()) %>% mutate(BCG_avg_round=round(BCG_avg, digits=0)) #create round number for average BCG 
+
+nrow(HUC8.avg)
+
+#Look at HUC8 watersheds with >=5 sample points
+View(HUC8.avg %>% filter(n>=5))
+#956/1464 watersheds have >= 5 sample points
+
+#recheck HUC8 IDs, leading zeros now included nrow(HUC8.avg)
+levels(factor(HUC8.avg$HUC8)) 
+
+#write to file 
+write_xlsx(HUC8.avg, path = paste(dir$output, "/BCG_avg_by_HUC8.xlsx", sep=""))
+```
+
+## Create spatial data for BCG sample locations
+
+```{r}
+#Converting to sf Object 
+
+names(Recent)
+BCG_sf <- st_as_sf(Recent, coords = c("Long","Lat")) 
+BCG_sf
+names(BCG_sf)
+
+#Set coordinate reference system to wgs84 
+st_crs(BCG_sf) = 4326 
+
+st_bbox(BCG_sf) #bounding box #can ID spatial extent of dataset
+
+#Do a quick check of spatial data
+plot(BCG_sf["BCG_yearly_avg"])
+
+```
+
+## Create spatial data for average BCG by HUC8
+
+```{r}
+
+#read in HUC8 boundaries 
+
+HUC8_shp <- st_read(paste(dir$spatial_dir, "/HUC_spatial_data/HUC8_CONUS/HUC8_CONUS.shp", sep="")) 
+
+head(HUC8_shp)
+
+st_bbox(HUC8_shp) #check bounding box
+
+st_crs(HUC8_shp) #reference system is WGS84
+
+#Merge average BCG information to HUC8s 
+HUC.BCG<-merge(HUC8_shp, HUC8.avg, by="HUC8", all.x=TRUE) 
+head(HUC.BCG)
+nrow(HUC.BCG)
+
+#Simplify columns
+HUC.BCG.simple<-HUC.BCG %>% dplyr::select(HUC8, AREASQKM, STATES, NAME, BCG_avg_round, n, geometry) %>% 
+  rename(BCG_AVG=BCG_avg_round) #make cleaner column name
+
+
+View(HUC.BCG.simple)
+
+
+names(HUC.BCG)
+
+#Simple plot of HUC8s 
+plot(HUC.BCG["BCG_avg_round"])
+plot(st_geometry(HUC.BCG))
+
+
+#Write Avg BCG by HUC8 to shapefile:
+st_write(HUC.BCG.simple, paste(dir$spatial_dir, "/BCG_avg_by_HUC8.shp", sep=""), append=FALSE)
+
+```
+
+### Fancier map of avg BCG by HUC8
+
+```{r}
+#map HUC8s (using tmap) 
+names(HUC.BCG.simple)
+
+#tmap_options(check.and.fix = TRUE) #set tmap options
+
+tm_shape(HUC.BCG.simple)+
+  tm_polygons(fill="BCG_AVG")
+
+
+#tm_layout(legend.outside = TRUE)+ #several more options available to clean up legend tm_shape(subset(World, name=="United States"))+ tm_borders()
+```
+
+### Look at new data for Florida
+
+```{r}
+names(HUC.BCG)
+
+US<-st_read(paste(dir$spatial_dir, "/united_states.shp", sep=""))
+st_crs(US)
+US_WGS84<-st_transform(US, crs=st_crs(HUC.BCG.simple))
+
+head(US_WGS84)
+
+names(HUC.BCG.simple)
+
+tm_shape(US %>% filter(STATE_NAME %in% c("Florida", "Georgia", "Alabama")))+
+  tm_borders()+
+tm_shape(st_make_valid(HUC.BCG))+
+  tm_polygons(fill="BCG_avg_round")+
+  tm_text("n", size=6)
+
+```
+
+### Look at new data for Connecticut
+
+```{r}
+tm_shape(US %>% filter(STATE_NAME %in% c("Connecticut")))+
+  tm_borders()+
+tm_shape(st_make_valid(HUC.BCG))+
+  tm_polygons(fill="BCG_avg_round")+
+  tm_text("n", size=6)
+```
+
+## Characterizing HUC4s for targeting surveys
+
+-   HUC4 list
+
+-   Number/list of HUC8s in each HUC4
+
+-   Number of biological samples in each HUC8
+
+-   Assigned BCG level for each HUC8 (if assignment exists)
+
+-   Population density in each HUC8
+
+I suggest we proceed in stages. Christy, if you can assemble the environmental elements, perhaps Yongjie can then fold in the population density figures from env atlas.
+
+Here are the study area definitions:
+
+-   [NW]{.underline}: HUC4s 1707, 1709, 1710, 1712, 1801, 1802
+
+-   [SW]{.underline}: HUC4s 1503, 1504, 1505, 1506, 1507, 1810
+
+-   [MW]{.underline}: all HUC4s in state of Nebraska plus 1012, 1014
+
+-   [SE]{.underline}: HUC4s 0306, 0307, 0308, 0311, 0312, 0313, 0315
+
+-   [NE]{.underline}:  HUC4s in NY, ,VT, NH, MA (perhaps not sampling NYC and Boston)
+
+```{r}
+
+#Load in HUC4 data:
+HUC4<-st_read(paste(dir$data_huc, "/HUC4_CONUS.shp", sep=""))
+names(HUC4)
+
+#check reference system
+st_crs(HUC4)
+
+plot(HUC4["huc4"])
+```
+
+```{r}
+#List of priority watersheds
+
+#Named list of priority watersheds from Dan P:
+HUC4.list_1<-c("1707", "1709", "1710", "1712", "1801", "1802", "1503", "1504", "1505", "1506", "1507", "1810", "1012", "1014", "0306", "0307", "0308", "0311", "0312", "0313", "0315")
+length(HUC4.list_1)
+
+#View(HUC4)
+
+#Plus additional HUC4s in NE, NY, ,VT, NH, MA (perhaps not sampling NYC and Boston)
+#read in USA state boundaries using tigris package
+library(tigris)
+states<-states()
+states_sf <- st_as_sf(states) #convert to sf object
+st_bbox(states_sf) #bounding box
+states_sf
+
+st_crs(states_sf) #check reference system
+
+names(states_sf)
+
+#Select states of interest
+Select_states_sf<-states_sf %>% filter(STUSPS %in% c("NE", "NY", "VT", "NH", "MA"))
+Select_states_sf
+plot(Select_states_sf["STUSPS"])
+
+#Select HUC4s that intersect these states:
+# First need to use st_make_valid on HUC4
+
+HUC4_valid<-st_make_valid(HUC4)
+
+HUC4_select_2<-st_intersection(HUC4_valid, Select_states_sf)
+
+#Check HUC4s
+plot(HUC4_select_2["STUSPS"])
+
+#Make list of these HUC4s:
+
+HUC4.list_2<-HUC4_select_2$huc4
+HUC4.list_2
+
+#Merge two HUC4 lists into one
+HUC4.list_priority<-c(HUC4.list_1, HUC4.list_2)
+HUC4.list_priority
+
+#Select Priority Watersheds
+HUC4_PRIORITY<-HUC4 %>% filter(huc4 %in% HUC4.list_priority)
+
+View(HUC4_PRIORITY)
+
+#Write priority HUC4s to shapefile:
+st_write(HUC4_PRIORITY, paste(dir$spatial_dir, "/HUC4_PRIORITY.shp", sep=""), append=FALSE)
+
+plot(HUC4_PRIORITY["huc4"])
+```
+
+## Characterize HUC4s
+
+-   HUC4 list
+
+-   Number/list of HUC8s in each HUC4
+
+-   Number of biological samples in each HUC8
+
+-   Assigned BCG level for each HUC8 (if assignment exists)
+
+-   Population density in each HUC8
+
+```{r}
+
+#Merge HUC4 ID to HUC8s (if not there already)
+
+#First 4 digits of HUC8 are HUC4 ID
+
+#Make a HUC4 column
+HUC.BCG.simple$huc4<-substr(HUC.BCG.simple$HUC8, 1, 4)
+View(HUC.BCG)
+
+
+#Select HUC8s from priority HUC4s:
+
+HUC.BCG.PRIORITY<-HUC.BCG.simple %>% filter(huc4 %in% HUC4.list_priority)
+
+View(HUC.BCG.PRIORITY)
+
+```
+
+### Plot HUC4s with detailed BCG info
+
+Color palletes: <https://github.com/cols4all/cols4all-R>
+
+```{r}
+
+#make valid geometry for HUC8s:
+
+HUC.BCG.PRIORITY_valid<-st_make_valid(HUC.BCG.PRIORITY)
+
+levels(factor(HUC.BCG.PRIORITY_valid$BCG_AVG))
+
+#Write Avg BCG by HUC8 to shapefile, w/HUC4 ID:
+st_write(HUC.BCG.PRIORITY_valid, paste(dir$spatial_dir, "/HUC.BCG.PRIORITY_valid.shp", sep=""), append=FALSE)
+
+View(HUC.BCG.PRIORITY_valid)
+
+#Create a label column for "n"
+HUC.BCG.PRIORITY_valid$n_label <- ifelse(is.na(HUC.BCG.PRIORITY_valid$n), "", HUC.BCG.PRIORITY_valid$n)
+
+View(HUC.BCG.PRIORITY_valid)
+
+#View map interactively: 
+tmap_mode("view")
+
+HUC4.Map<-
+tm_shape(HUC.BCG.PRIORITY_valid)+
+  tm_fill(fill="BCG_AVG", 
+              fill.scale = tm_scale_categorical(values = "area7"))+
+              tm_text("n_label", size=1)+
+tm_shape(HUC.BCG.PRIORITY_valid)+
+  tm_borders(lwd=0.5, col="gray")+
+  tm_shape(HUC4_PRIORITY)+
+  tm_borders(lwd=2, col="black")
+HUC4.Map
+
+
+#Add ecoregion
+
+
+tm_save(HUC4.map, paste(dir$maps, "Priority_HUC4s.png"))
+```
+
+Create tables to summarize HUC4 characteristics
+
+```{r}
+
+#ID HUC4s where all HUC8s have >=5 sample sites 
+
+##LEFT OFF 4.3.25
+
+#Number of HUC8s by HUC4
+
+HUC.BCG.PRIORITY_valid %>% 
+  st_drop_geometry %>% 
+  group_by(huc4) %>% 
+  count()
+
+
+```
+
+## Finer resolution mapping: Minnesota
+
+Load in data obtained from Urban Biomonitoring Project (w/Claire Bass)
+
+Data source: MPCA
+
+(only a few local agencies have IBI scores available, and these are not included here yet)
+
+```{r}
+
+setwd("G:/Shared drives/Finlay lab/Projects/Urban_biomonitoring/Biomonitoring_datasets/MPCA")
+
+#read in info about sampling stations
+station<-read_excel("./ClaireBass_DataRequest.xlsx", sheet="Station Information")
+
+head(station)
+
+invert.data<-read_excel("./ClaireBass_DataRequest.xlsx", sheet="Invertbrate_Data_IndexScores")
+
+head(invert.data)
+```
+
+Link Lat/Long to IBI scores:
+
+```{r}
+names(station)
+names(invert.data)
+
+invert.sites<-merge(invert.data, station, by=c("FieldNum"))
+head(invert.sites)
+```
+
+Convert MN IBI scores to BCG proxy (based on criteria from Round 1 of EPA project - see Appendix of EPA paper)
+
+Just realized that you didn't use proxies for MN BCGs, because you had actual BCG scores! And we don't have these for new urban biomonitoring request.
+
+```{r}
+
+```
