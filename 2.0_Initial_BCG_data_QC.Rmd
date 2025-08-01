@@ -21,7 +21,7 @@ QC Issues include:
 
 -   Calculate average BCG scores for sites sampled multiple times in one year, whether they were sampled either by multiple agencies or the same agency. Note that some of this duplication is because some state datasets were also included in the regional Chesapeake dataset
 
-# Set Up Workspace
+# 1.) Set Up Workspace
 
 Clean up workspace and load packages (or install packages if necessary)
 
@@ -79,14 +79,14 @@ deg_dist<- function(x,y){
 }
 ```
 
-# 1). Load Data Files
+# 2). Load Data Files
 
 ```{r}
 data <- read_csv(paste(dir$output, "/EPA_BCG_allsamples_ALLROUNDS_HUC8ID_NHDCOMID_clean_HUC12.csv", sep = ""))
 setDT(data)
 ```
 
-# 2). General QC Checks -----
+# 3). General QC Checks -----
 
 ```{r}
 #Check for NA values
@@ -137,7 +137,7 @@ data[, cp_site:=0]
 data[LatLong_ID %in% cp_list, cp_site:=1] #dummy variable indicating if this location was sampled by Chesapeake
 ```
 
-# 3.) Sites sampled by multiple agencies
+# 4.) Sites sampled by multiple agencies
 
 ```{r}
 #number of times a site is sampled in a given year
@@ -148,50 +148,6 @@ head(data)
 multi_sample_sites <- data[year_count>1,]
 multi_sample_sites[, bcg_annual_range:=max(BCG_proxy)-min(BCG_proxy), by=.(SiteID, year)]
 write_xlsx(multi_sample_sites, path = paste(dir$output, "/multi_sample_sites.xlsx", sep=""))
-
-
-```
-
-Visual and table analysis showing sites sampled by multiple agencies:
-
-(Note: writing these plots to file isn't working right now and needs to be updated)
-
-```{r}
-#visual analysis
-
-p1 <- barplot(table(multi_sample_sites$year_count),
-              main = "Same Site & Year: Sample Frequency",
-              xlab = "Annual Sample Frequency",
-              ylab = "# Obs",
-              ylim = c(0, 20000))
-text(x = c(0.5, 2, 3, 4.25, 5.5, 6.75, 8, 9, 10.25, 11.5,  12.75, 14, 15.25, 16.25, 17.5, 18.5),
-     y=table(multi_sample_sites$year_count),
-     label = table(multi_sample_sites$year_count), 
-     pos = 3, cex = 1, col = "red")
-p1
-
-png(paste(dir$output,"/graphics/multi_sample_sites_obs_year.png", sep = ""),         
-    width=600,
-    height=400) 
-p1
-dev.off()
-
-
-
-png(paste(dir$output,"/graphics","/multi_sample_sites_yr_score_range.png", sep = ""),         
-    width=600,
-    height=400) 
-p2 <- barplot(table(multi_sample_sites$bcg_annual_range),
-              main = "Same Site & Year: BCG Score Range",
-              xlab = "Score Range",
-              ylab = "# Obs",
-              ylim = c(0, 15000))
-text(x = c(0.5, 2, 3, 4.25, 5.5, 6.75, 8),
-     y=table(multi_sample_sites$bcg_annual_range),
-     label = table(multi_sample_sites$bcg_annual_range), 
-     pos = 3, cex = 1, col = "red")
-dev.off()
-
 
 
 ```
@@ -254,9 +210,6 @@ for (i in 1:length(agencies)){
 
 View(multi_sample_summary_tbl)
 
-print(xtable(multi_sample_summary_tbl, type = "latex"), file = paste(dir$output,"/tables", "/multi_sample_summary_tbl.tex", sep = ""))
-
-
 #Add flags for multi-sampled sites
 data <- data[year_count>1, multi_sample_yr:=1]                                  #this site was sampled more than once in this year                    
 
@@ -274,7 +227,7 @@ data[,c("multi_sample_yr", "multi_sample_mnth", "multi_sample_date", "same_agenc
 
 ```
 
-# 4.) Generate Clean Tables For Analysis
+# 5.) Generate Clean Tables For Analysis
 
 ```{r}
 #Clean dataset: All Purpose
@@ -294,7 +247,7 @@ write_xlsx(data, path =  paste(dir$output, "/bcg_data_general.xlsx", sep=""))
 nrow(data)
 ```
 
-# 5.) Further Data Cleaning
+# 6.) Further Data Cleaning
 
 -   Omit samples collected in winter (December, January, February) (i.e., outside of typical range during which biotic condition is assessed)
 
