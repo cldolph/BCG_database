@@ -109,10 +109,10 @@ Key output files:
 + **BCG_proxy**, BCG score generated through the conversion script (also contains actual BCG scores where provided by state agencies)
 
 ## References
-Marley Bonacquist-Currin, M. and Dolph, C.L. In prep. Communicating Ecological Complexity Through Environmental Graphics 
-R Core Team (2025). _R: A Language and Environment for Statistical Computing_. R Foundation for Statistical Computing, Vienna, Austria. <https://www.R-project.org/>
-USEPA (2016). A Practitioner's Guide to the Biological Condition Gradient: A Framework to Describe Incremental Change in Aquatic Ecosystems. EPA-842-R-16-001. U.S. Environmental Protection Agency, Washington, DC.
-Vossler, C. A., Dolph, C. L., Finlay, J. C., Keiser, D. A., Kling, C. L., & Phaneuf, D. J. (2023). Valuing improvements in the ecological integrity of local and regional waters using the biological condition gradient. Proceedings of the National Academy of Sciences, 120(18). https://doi.org/10.1073/pnas.2120251119 
++ Marley Bonacquist-Currin, M. and Dolph, C.L. In prep. Communicating Ecological Complexity Through Environmental Graphics 
++ R Core Team (2025). _R: A Language and Environment for Statistical Computing_. R Foundation for Statistical Computing, Vienna, Austria. <https://www.R-project.org/>
++ USEPA (2016). A Practitioner's Guide to the Biological Condition Gradient: A Framework to Describe Incremental Change in Aquatic Ecosystems. EPA-842-R-16-001. U.S. Environmental Protection Agency, Washington, DC.
++ Vossler, C. A., Dolph, C. L., Finlay, J. C., Keiser, D. A., Kling, C. L., & Phaneuf, D. J. (2023). Valuing improvements in the ecological integrity of local and regional waters using the biological condition gradient. Proceedings of the National Academy of Sciences, 120(18). https://doi.org/10.1073/pnas.2120251119 
 
 
 ## Questions, Comments,  Bugs? 
