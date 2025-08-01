@@ -141,7 +141,7 @@ levels(factor(HUC8.avg$HUC8))
 write_xlsx(HUC8.avg, path = paste(dir$output, "/BCG_avg_by_HUC8.xlsx", sep=""))
 ```
 
-## Create spatial data for BCG sample locations
+# Create spatial data for BCG sample locations
 
 ```{r}
 #Converting to sf Object 
@@ -161,7 +161,7 @@ plot(BCG_sf["BCG_yearly_avg"])
 
 ```
 
-## Create spatial data for average BCG by HUC8
+# Create spatial data for average BCG by HUC8
 
 ```{r}
 

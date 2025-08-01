@@ -1233,6 +1233,11 @@ clean up to include only relevant files**
 EPA.NHD2<-st_read(paste(spatial_dir,"/EPA_BCG_allsamples_ALLROUNDS_NHDCOMID.shp", sep=""))
 names(EPA.NHD2)
 
+
+#Unzip HUC12 geodatabase in spatial data folder 
+unzip(paste0(dir$data_huc, '/HUC_spatial_data.gdb.zip'), exdir=dir$data_huc)
+
+      
 HUC12<-st_read(dsn = paste(dir$data_huc, '/HUC_spatial_data.gdb',sep=""), layer = "HUC12")
 st_crs(HUC12)
 
