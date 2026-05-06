@@ -27,6 +27,7 @@ CLD = Christy Dolph
 
 # Clean up workspace and load or install packages if necessary
 rm(list=ls())
+
 want <- c("data.table", "fixest", "tidyverse", "tidylog", "readxl", "lubridate", "rmarkdown", "writexl", "sf", "mapview", "xtable", "pals", "tmap", "maps", "gridExtra", "ffmpeg", "magick", "animation", "geosphere", "tigris")
 need <- want[!(want %in% installed.packages()[,"Package"])]
 if (length(need)) install.packages(need)
@@ -63,11 +64,11 @@ This BCG data has had the following pre-processing:
 
 -   Biological index scores converted to BCG "proxy" by CLD (see script: "1.0_BCG_proxy_conversion.R")
 
--   BCG sample locations merged to the 2025 Watershed Boundary Dataset (WBD) (eg HUC12, HUC8 & HUC4 IDs) and NHD v2 Plusattributes by CLD (see script "1.0_BCG_proxy_conversion.Rmd")
+-   BCG sample locations merged to the 2025 Watershed Boundary Dataset (WBD) (eg HUC12 & HUC4 IDs) and NHD v2 Plus attributes by CLD (see script "1.0_BCG_proxy_conversion.Rmd")
 
--   Additional pre-processing by VC and CLD (see script "0.1_qc_REVISED.R"):
+-   Additional pre-processing by VC and CLD (see script "2.0_Initial_BCG_data_QC_updated.R"):
 
-    -   Filtered to 1 Observation per Site per Year
+    -   Filtered to 1 BCG Observation per Site per Year
 
     -   Subsamples were averaged to create an average BCG score per site/date
 
@@ -91,8 +92,6 @@ names(bcg_data_filtered)
 
 -   Select data only post 2000
 
--   Format HUC IDs
-
 ```{r}
 
 #Select most recent year sampled for each site 
@@ -100,7 +99,7 @@ Recent<-bcg_data_filtered %>%
   group_by(LatLong_ID) %>%
   slice(which.max(year)) %>% #select most recent year for each site
   ungroup() %>% 
-  dplyr::select(-c(samples_per_year, total_samples_per_site)) %>% #drop unneeded columns
+  dplyr::select(-c(samples_per_year, total_years_visited)) %>% #drop unneeded columns
   rename(BCG=BCG_yearly) #rename average yearly BCG for clarity
   
 nrow(bcg_data_filtered)
@@ -114,12 +113,7 @@ Recent<-Recent %>%
   filter(year>2000)
 
 nrow(Recent)
-#View(head(Recent))
 
-#Check HUC8 IDs for leading zero 
-levels(factor(Recent$HUC8)) 
-
-nrow(Recent)
 names(Recent)
 
 ```
@@ -161,14 +155,6 @@ st_bbox(BCG_sf) #bounding box #can ID spatial extent of dataset
 #Do a quick check of spatial data
 plot(BCG_sf["BCG"])
 
-#Check HUC8s with so many sample locations??
-
-tmap_mode("view")
-
-tm_shape(BCG_sf %>% filter(HUC8=="02060003"))+
-  tm_dots()
-#these do appear to be legitimate sampling locations
-
 names(BCG_sf)
 
 ```
@@ -190,7 +176,7 @@ HUC8_valid<-st_make_valid(HUC8_shp)
 start.time2<-Sys.time()
 start.time2
 
-HUC_BCG_all <- st_join(BCG_sf %>% dplyr::select(-c(HUC8)), 
+HUC_BCG_all <- st_join(BCG_sf, 
                        
                     HUC8_valid %>% select(HUC8, NAME)) %>% 
   dplyr::rename(huc8_name=NAME)
@@ -242,7 +228,7 @@ tm_shape(BCG_eco %>% filter(is.na(WSA9_NAME)))+
 
 
 
-#17 points are right on the ecoregion border
+#17 points are right on the ecoregion border:
 missing.points<-BCG_eco %>% filter(is.na(WSA9_NAME)) %>% dplyr::select(LatLong_ID)
 missing.points
                                        
@@ -254,6 +240,8 @@ BCG_eco2<-cbind(HUC_BCG_all %>% filter(LatLong_ID %in% missing.points$LatLong_ID
 
 View(ecoregions_valid[BCG_eco_2_index,])
 View(BCG_eco2)
+
+#Add ecoregion for these sites to all the other sites:
 
 BCG_eco_all<-bind_rows(BCG_eco %>% filter(!is.na(WSA9_NAME)), BCG_eco2)
 nrow(BCG_eco_all)

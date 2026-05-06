@@ -6,115 +6,197 @@ output:
   extra_dependencies: ['amsmath', 'xcolor']
 editor_options: 
   chunk_output_type: console
+  markdown: 
+    wrap: 72
 ---
 
 ## Project Description
 
-This repository contains biological condition data assembled from multiple sources (local, state, regional, federal) for ~56,000 streams across the coterminous United States between 2000-2025, as well as the RMarkdown scripts that were used in data assembly and processing. Briefly, the goal was to compile Biological Condition Gradient (BCG; USEPA 2016) data for streams across the country. While many local, state and federal agencies measure and track the biological condition of streams and rivers within their borders using some type of biological index, BCG scores have only been computed for sites where states have either explicitly developed BCG scoring criteria according to EPA’s framework (Connecticut, Illinois, Indiana, Minnesota) or mapped other biological indices onto the concepts of the BCG (California, Florida, Ohio, Oregon, Texas). Other states use state-specific biotic indices to measure the biological integrity of streams. For these states, we developed a ‘BCG proxy’ that translated state-specific biotic index scores into the 6 BCG levels, as described in Vossler et al., (2023) and Bonacquist-Currin et al. (in prep). All biological indices included in this study were based on benthic macroinvertebrate communities, except for the state of Georgia, which provided a biological index based on fish.
+This repository contains biological condition data assembled from
+multiple sources (local, state, regional, federal) for \~55,000 streams
+across the coterminous United States between 2000-2025, as well as the
+RMarkdown scripts that were used in data assembly and processing.
+Briefly, the goal was to compile Biological Condition Gradient (BCG;
+USEPA 2016) data for streams across the country. While many local, state
+and federal agencies measure and track the biological condition of
+streams and rivers within their borders using some type of biological
+index, BCG scores have only been computed for sites where states have
+either explicitly developed BCG scoring criteria according to EPA’s
+framework (Connecticut, Illinois, Indiana, Minnesota) or mapped other
+biological indices onto the concepts of the BCG (California, Florida,
+Ohio, Oregon, Texas). Other states use state-specific biotic indices to
+measure the biological integrity of streams. For these states, we
+developed a ‘BCG proxy’ that translated state-specific biotic index
+scores into the 6 BCG levels, as described in Vossler et al., (2023) and
+Bonacquist-Currin et al. (in prep). All biological indices included in
+this study were based on benthic macroinvertebrate communities, except
+for the state of Georgia, which provided a biological index based on
+fish.
 
+This repository includes the raw biological index data we compiled, as
+well as the scripts we used to translate biological indices to 'BCG
+proxies'. The scripts include steps to: 1. assemble all data and
+translate biological index scores into BCG proxies 2. clean and process
+data resulting in an average BCG score for each stream site in each year
+it was sampled\
+3. create maps of BCG data
 
-This repository includes the raw biological index data we compiled, as well as the scripts we used to translate biological indices to 'BCG proxies'. The scripts include steps to:
-1. assemble all data and translate biological index scores into BCG proxies
-2. clean and process data resulting in an average BCG score for each stream site in each year it was sampled  
-3. create maps of BCG data 
-
-Sources of biological condition data for the following states are described in Vossler et al. (2023): IA, IL, IN, KY, MN, MO, NC, OH, TN, VA, WI, WV.  Sources of biological data for the following state, regional and US-scale datasets are described in Bonacquist-Currin et al. (in prep): AZ, CA, CT, FL, GA, ID, NE, NY, NC, OR, TX, WY, the USA EPA National Aquatic Resource Survey (NARS) dataset and the Chesapeake Bay Dataset. All data was processed using R statistical software (R Core Team, 2025). 
+Sources of biological condition data for the following states are
+described in Vossler et al. (2023): IA, IL, IN, KY, MN, MO, NC, OH, TN,
+VA, WI, WV. Sources of biological data for the following state, regional
+and US-scale datasets are described in Bonacquist-Currin et al. (in
+prep): AZ, CA, CT, FL, GA, ID, NE, NY, NC, OR, TX, WY, the USA EPA
+National Aquatic Resource Survey (NARS) dataset and the Chesapeake Bay
+Dataset. All data was processed using R statistical software (R Core
+Team, 2025).
 
 \
 
 ## System Requirements
 
-This project was developed on R Studio version 4.2.1. 
+This project was developed on R Studio version 4.2.1.
 
 \
 
 ## Files
 
-The code and filing system uses relative directory paths. No changes to the file paths are necessary. 
+The code and filing system uses relative directory paths. No changes to
+the file paths are necessary.
 
-Scripts:
-1. `1.0_BCG_proxy_conversion.Rmd` : Assembles biological condition data from multiple sources and generates BCG proxies for sites lacking BCG scores.
-2. `2.0_Initial_BCG_data_QC.Rmd`: Cleans and processes data & checks for QC issues in the BCG dataset, resulting in an average BCG score for each stream site in each year it was sampled.
-3. `3.0_BCG_spatial_coverage_for_survey`: Creates spatial layers and maps of Biological Condition Gradient (BCG) data 
+Scripts: 1. `1.0_BCG_proxy_conversion.Rmd` : Assembles biological
+condition data from multiple sources and generates BCG proxies for sites
+lacking BCG scores. 2. `2.0_Initial_BCG_data_QC.Rmd`: Cleans and
+processes data & checks for QC issues in the BCG dataset, resulting in
+an average BCG score for each stream site in each year it was sampled.
+3. `3.0_BCG_spatial_coverage_for_survey`: Creates spatial layers and
+maps of Biological Condition Gradient (BCG) data
 
-Data folders/files:
-1. `EPA_Round_1_data`: Unprocessed biological condition data from the following states: IA, IL, IN, KY, MN, MO, NC, OH, TN, VA, WI, WV.
+Data folders/files: 1. `EPA_Round_1_data`: Unprocessed biological
+condition data from the following states: IA, IL, IN, KY, MN, MO, NC,
+OH, TN, VA, WI, WV.
 
-2. `EPA Round_2_data`: Unprocessed biological condition data from the following states and regions: AZ, Southern CA, CT, FL, GA, ID, NE, NY, NC, OR, TX, WY, the USA EPA National Aquatic Resource Survey (NARS) dataset and the Interstate Commission on the Potomac River Basin Chesapeake Bay Dataset. 
+2.  `EPA Round_2_data`: Unprocessed biological condition data from the
+    following states and regions: AZ, Southern CA, CT, FL, GA, ID, NE,
+    NY, NC, OR, TX, WY, the USA EPA National Aquatic Resource Survey
+    (NARS) dataset and the Interstate Commission on the Potomac River
+    Basin Chesapeake Bay Dataset.
 
-3. BCG_output`: location for all output data generated by the above RMarkdown scripts.
-Key output files: 
-+ `EPA_BCG_allsamples_ALLROUNDS_HUC8ID_NHDCOMID_clean_HUC12.xlsx` : This file contains BCG scores for all sites compiled from state and other agencies. Note that this file includes sites that were assessed by more than once agency - so there may be multiple scores for a site based on the same sampling event, but different agency scoring criteria. This data also includes repeat visits over time to some sites where available. This file includes HUC8 and HUC12 watershed ID information for sample sites, as well as National Hydrography Dataset Plusv2 stream reach IDs (called "COMID") for each site.
-+ `bcg_data_filtered.xlsx`: Contains min, max and average BCG scores for each stream site in each year it was sampled.
-+ `bcg_most_recent_since2000.xlsx`: Contains the most recent BCG score for each stream site in the dataset. 
+3.  BCG_output\`: location for all output data generated by the above
+    RMarkdown scripts. Key output files:
 
-4. `Spatial_data`: contains spatial data layers used to add HUC attributes to sampled stream locations. 
+-   `EPA_BCG_allsamples_ALLROUNDS_HUC8ID_NHDCOMID_clean_HUC12.xlsx` :
+    This file contains BCG scores for all sites compiled from state and
+    other agencies. Note that this file includes sites that were
+    assessed by more than once agency - so there may be multiple scores
+    for a site based on the same sampling event, but different agency
+    scoring criteria. This data also includes repeat visits over time to
+    some sites where available. This file includes HUC8 and HUC12
+    watershed ID information for sample sites, as well as National
+    Hydrography Dataset Plusv2 stream reach IDs (called "COMID") for
+    each site.
+-   `bcg_data_filtered.xlsx`: Contains min, max and average BCG scores
+    for each stream site in each year it was sampled.
+-   `bcg_most_recent_since2000.xlsx`: Contains the most recent BCG score
+    for each stream site in the dataset.
+
+4.  `Spatial_data`: contains spatial data layers used to add HUC
+    attributes to sampled stream locations.
 
 \
 
 ## Set Up & Installation
 
-1. Download `~/BCG_database.zip` to local file system.
+1.  Download `~/BCG_database.zip` to local file system.
 
-2. Unzip the files to a folder labeled `~/BCG_database`.
+2.  Unzip the files to a folder labeled `~/BCG_database`.
 
-3. Still in the local file system, navigate to `~/BCG_database` and open the `BCG-analysisRproj` file. This will open the project in RStudio and set the working directory to `~/BCG_database`.
+3.  Still in the local file system, navigate to `~/BCG_database` and
+    open the `BCG-analysisRproj` file. This will open the project in
+    RStudio and set the working directory to `~/BCG_database`.
 
-4. Run the RMarkdown scripts in numerical order, beginning with `1.0_BCG_proxy_conversion.Rmd`. Follow the notes in each script file for detailed instructions.
+4.  Run the RMarkdown scripts in numerical order, beginning with
+    `1.0_BCG_proxy_conversion.Rmd`. Follow the notes in each script file
+    for detailed instructions.
 
 \
 
 **Data Dictionary**
 
-+ **Row_ID**, a unique observation identifier
-+ **State**, the sampling agency 
-+ **epa_site**, dummy variable = 1 if the site was sampled by the EPA in that year
-+ **cp_site**, dummy variable = 1 if the site was sampled by Chesapeake Bay Program 
-+ **SiteID**, unique identifier for the site as assigned by the sampling agency
-+ **State_Site_ID**, unique identifier for the site by sampling agency
-+ **Date**, date stream site was sampled
-+ **year**, year stream site was sampled
-+ **month**, month stream site was sampled
-+ **day**, day of the month stream site was sampled 
-+ **Lat**, latitude in degrees 
-+ **Long**, longitude in degrees
-+ **LatLong_ID**, unique site identifier by geolocation
-+ **HUC8**, HUC 8 watershed id
-+ **huc2**, HUC 2 Watershed id
-+ **huc2name**, HUC2 regional name
-+ **StreamLeve**, Stream level specified by NHDPlusv2 dataset 
-+ **StreamOrde**, Stream order specified by NHDPlusv2 dataset
-+ **COMID**, stream segment id specified by NHDPlusv2 dataset
-+ **NAME**, stream name specified by NHDPlusv2 dataset
-+ **GNIS_ID**, Geographic Names Information System id
-+ **GNIS_NAME**, GNIS name from NHDPlusv2
-+ **AREAACRES**, drainage area for stream segment in acres 
-+ **AREASQKM**, draing area for stream segment in sq km
-+ **LENGTHKM**, stream segment length
-+ **REACHCODE**, Reachcode for each stream segment from NHDPlusv2
-+ **FTYPE**, stream feature type from NHDPlusv2  
-+ **FCODE**, stream type code from NHDPlus v2 
-+ **count_sample**, number of times this location is sampled based on LatLong_ID
-+ **count_agency**, number of agencies sampling this location based on LatLong_ID
-+ **year_count**, number of times this site was sampled in this year
-+ **mnth_count**, number of times this site was in this month of this year
-+ **date_count**, number of times this site was sampled on this exact date
-+ **multi_sample_yr**, dummy = 1 if this site was sampled more than once in this year
-+ **multi_sample_mnth**, dummy = 1 if this site was sampled more than once in this month of this year
-+ **multi_sample_date**, dummy = 1 if this site was sampled more than once on this exact date
-+ **same_agency_multi_sample_yr**, dummy =1 if the same-year multi-sampling of this site was done by one agency
-+ **same_agency_multi_sample_mnth**, dummy =1 if the same month-year multi-sampling of this site was done by one agency
-+ **same_agency_multi_sample_date**, dummy =1 if the same date multi-sampling of this site was done by one agency
-+ **Taxa**, specifies taxonomic group BCG score were based on (typically macroinvertebrates). 
-+ **BCG_proxy**, BCG score generated through the conversion script (also contains actual BCG scores where provided by state agencies)
+-   **Row_ID**, a unique observation identifier
+-   **State**, the sampling agency
+-   **epa_site**, dummy variable = 1 if the site was sampled by the EPA
+    in that year
+-   **cp_site**, dummy variable = 1 if the site was sampled by
+    Chesapeake Bay Program
+-   **SiteID**, unique identifier for the site as assigned by the
+    sampling agency
+-   **State_Site_ID**, unique identifier for the site by sampling agency
+-   **Date**, date stream site was sampled
+-   **year**, year stream site was sampled
+-   **month**, month stream site was sampled
+-   **day**, day of the month stream site was sampled
+-   **Lat**, latitude in degrees
+-   **Long**, longitude in degrees
+-   **LatLong_ID**, unique site identifier by geolocation
+-   **HUC8**, HUC 8 watershed id
+-   **huc2**, HUC 2 Watershed id
+-   **huc2name**, HUC2 regional name
+-   **StreamLeve**, Stream level specified by NHDPlusv2 dataset
+-   **StreamOrde**, Stream order specified by NHDPlusv2 dataset
+-   **COMID**, stream segment id specified by NHDPlusv2 dataset
+-   **NAME**, stream name specified by NHDPlusv2 dataset
+-   **GNIS_ID**, Geographic Names Information System id
+-   **GNIS_NAME**, GNIS name from NHDPlusv2
+-   **AREAACRES**, drainage area for stream segment in acres
+-   **AREASQKM**, draing area for stream segment in sq km
+-   **LENGTHKM**, stream segment length
+-   **REACHCODE**, Reachcode for each stream segment from NHDPlusv2
+-   **FTYPE**, stream feature type from NHDPlusv2\
+-   **FCODE**, stream type code from NHDPlus v2
+-   **count_sample**, number of times this location is sampled based on
+    LatLong_ID
+-   **count_agency**, number of agencies sampling this location based on
+    LatLong_ID
+-   **year_count**, number of times this site was sampled in this year
+-   **mnth_count**, number of times this site was in this month of this
+    year
+-   **date_count**, number of times this site was sampled on this exact
+    date
+-   **multi_sample_yr**, dummy = 1 if this site was sampled more than
+    once in this year
+-   **multi_sample_mnth**, dummy = 1 if this site was sampled more than
+    once in this month of this year
+-   **multi_sample_date**, dummy = 1 if this site was sampled more than
+    once on this exact date
+-   **same_agency_multi_sample_yr**, dummy =1 if the same-year
+    multi-sampling of this site was done by one agency
+-   **same_agency_multi_sample_mnth**, dummy =1 if the same month-year
+    multi-sampling of this site was done by one agency
+-   **same_agency_multi_sample_date**, dummy =1 if the same date
+    multi-sampling of this site was done by one agency
+-   **Taxa**, specifies taxonomic group BCG score were based on
+    (typically macroinvertebrates).
+-   **BCG_proxy**, BCG score generated through the conversion script
+    (also contains actual BCG scores where provided by state agencies)
 
 ## References
-+ Marley Bonacquist-Currin, M. and Dolph, C.L. In prep. Communicating Ecological Complexity Through Environmental Graphics 
-+ R Core Team (2025). _R: A Language and Environment for Statistical Computing_. R Foundation for Statistical Computing, Vienna, Austria. <https://www.R-project.org/>
-+ USEPA (2016). A Practitioner's Guide to the Biological Condition Gradient: A Framework to Describe Incremental Change in Aquatic Ecosystems. EPA-842-R-16-001. U.S. Environmental Protection Agency, Washington, DC.
-+ Vossler, C. A., Dolph, C. L., Finlay, J. C., Keiser, D. A., Kling, C. L., & Phaneuf, D. J. (2023). Valuing improvements in the ecological integrity of local and regional waters using the biological condition gradient. Proceedings of the National Academy of Sciences, 120(18). https://doi.org/10.1073/pnas.2120251119 
 
+-   Marley Bonacquist-Currin, M. and Dolph, C.L. In prep. Communicating
+    Ecological Complexity Through Environmental Graphics
+-   R Core Team (2025). *R: A Language and Environment for Statistical
+    Computing*. R Foundation for Statistical Computing, Vienna, Austria.
+    <https://www.R-project.org/>
+-   USEPA (2016). A Practitioner's Guide to the Biological Condition
+    Gradient: A Framework to Describe Incremental Change in Aquatic
+    Ecosystems. EPA-842-R-16-001. U.S. Environmental Protection Agency,
+    Washington, DC.
+-   Vossler, C. A., Dolph, C. L., Finlay, J. C., Keiser, D. A.,
+    Kling, C. L., & Phaneuf, D. J. (2023). Valuing improvements in the
+    ecological integrity of local and regional waters using the
+    biological condition gradient. Proceedings of the National Academy
+    of Sciences, 120(18). <https://doi.org/10.1073/pnas.2120251119>
 
-## Questions, Comments,  Bugs? 
+## Questions, Comments, Bugs?
 
-Please contact Christy Dolph at dolph008@umn.edu.
+Please contact Christy Dolph at
+[dolph008\@umn.edu](mailto:dolph008@umn.edu){.email}.

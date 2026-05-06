@@ -30,7 +30,10 @@ Clean up workspace and load packages (or install packages if necessary)
 ```{r, setup, include =FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+#Remove everything from environment:
 rm(list=ls())
+
+#Load required packages
 want <- c("data.table", "fixest", "tidyverse", "tidylog", "readxl", "lubridate", "rmarkdown", "writexl", "sf", "mapview", "xtable", "pals", "tmap", "maps", "gridExtra", "ffmpeg", "magick", "animation", "geosphere", "nhdplusTools", "knitr")
    
 
@@ -60,31 +63,10 @@ dir$data_huc  <- paste(dir$root, "/Spatial_data/HUC_spatial_data", sep = "")
 dir$output<-paste(dir$root, "/BCG_output", sep="")
 ```
 
-Create user-defined functions:
-
-```{r}
-# Sets up user defined functions for subsequent workflow.
-
-# Not In Function --------------------------------------------------------------
-#returns values NOT in a defined list/vector
-
-`%notin%` = Negate(`%in%`)
-
-
-# Distance Function ------------------------------------------------------------
-#calculates the distances in degrees between any two sites
-
-deg_dist<- function(x,y){
-  a=data$Lat[data$LatLong_ID==x] - data$Lat[data$LatLong_ID==y]
-  b=data$Long[data$LatLong_ID==x] - data$Long[data$LatLong_ID==y]
-  unique(sqrt(a^2+b^2))
-}
-```
-
 # 2 Load Data Files
 
 ```{r}
-data <- read_csv(paste(dir$output, "/EPA_BCG_allsamples_ALLROUNDS_HUC8ID_NHDCOMID_clean_HUC12.csv", sep = ""))
+data <- read_csv(paste(dir$output, "/EPA_BCG_allsamples_ALLROUNDS_NHDCOMID_clean_HUC12.csv", sep = ""))
 setDT(data)
 
 names(data)
@@ -105,11 +87,9 @@ nrow(data)
 
 -   Averages BCG across subsamples (multiple samples collected per site/day) and across samples per year, whether those samples were collected by the same or different agencies
 
-    -   Note that some of this duplication is because some state datasets were also included in the regional Chesapeake dataset
+    -   Note that some of this duplication is because some state datasets were also included in the regional Chesapeake or national EPA dataset
 
     -   Also calculate min and max BCG score in a given year
-
--   Also calculate min and max BCG score in a given year
 
 ```{r}
 #Check for NA values
@@ -149,7 +129,11 @@ nrow(data)
 
 
 #Break out the huc2 regions 
-data$huc2 <-as.numeric(substr(data$HUC8, 1, nchar(data$HUC8)-6))
+levels(factor(data$HUC4))
+data$huc2 <-as.numeric(substr(as.character(data$HUC4), 1, nchar(as.character(data$HUC4))-2))
+
+data$huc2
+levels(factor(data$huc2))
 
 huc2_names <- cbind(unique(data$huc2[order(data$huc2)]),
                     as.data.frame(c("New England", "Mid-Atlantic", "South Atlantic Gulf", 
@@ -167,7 +151,7 @@ nrow(data)
 
 
 #Add unique numeric site ID based on unique location:
-#(this takes several minutes)
+
 data2<-data %>% 
   group_by(Lat, Long) %>% 
   mutate(LatLong_ID = cur_group_id()) %>%
@@ -177,8 +161,6 @@ View(data2)
 
 
 #Count total number of samples per site/date - are there subsamples?
-names(data2) 
-
 
 data3<-data2 %>% 
   add_count(LatLong_ID, Date, name="samples_per_date")
@@ -187,7 +169,7 @@ data3 %>% filter(samples_per_date>1) %>% count()/
 nrow(data3)
 
 #am seeing some subsample data
-#~10% of all rows are multi samples per date (this might be more applicable for river samples)
+#~10% of all rows are multi samples per date (appears more applicable for river samples)
 
 #Average BCG subsamples collected on same day by same agency
 data3<-data3 %>% 
@@ -198,9 +180,9 @@ data3<-data3 %>%
   distinct() %>% 
 #now add counts per site/year
   add_count(LatLong_ID, year, name="samples_per_year") %>% 
-#The issue is, if some sites have many samples per year, that will skew the average HUC8 average towards the BCG values at those sites
-#Same issue will occur if some sites are sampled repeatedly over the years; but later will select most recent yearly sample for every site
-  #create average BCG score for each site, every year
+#If some sites have many samples per year, that will skew the average HUC8 average towards the BCG values at those sites
+#(Same issue will occur if some sites are sampled repeatedly over the years; but in next module will select most recent yearly sample for every site)
+  #create average BCG score for every site/year combination
   #this also deals with the same site/year being included in multiple agency datasets by averaging them
   group_by(LatLong_ID, year) %>% 
   mutate(BCG_yearly=mean(BCG_daily)) %>% 
@@ -208,17 +190,18 @@ data3<-data3 %>%
   dplyr::select(-c(BCG_daily, Date, samples_per_date, SiteID, State, month)) %>% 
   distinct() %>% 
 #now add counts per site
-  add_count(LatLong_ID, name = "total_samples_per_site")
+  add_count(LatLong_ID, name = "total_years_visited")
 
 
 View(data3)
 
 #Are there still duplicates, for samples in the same year from multiple agency datasets?
 
-View(data3 %>% 
+data3 %>% 
   add_count(LatLong_ID, year, name="agency_duplicates") %>% 
-  filter(agency_duplicates>1))
+  filter(agency_duplicates>1)
 
+#No duplicates
 ```
 
 # 4 Write clean data to file
