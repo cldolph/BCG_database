@@ -3,6 +3,8 @@ title: "3.0 BCG spatial coverage for survey"
 author: "Christy Dolph"
 date: "2025-04-01"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 
 # Overview
@@ -21,8 +23,7 @@ CLD = Christy Dolph
 
 # Workspace Setup
 
-```{r, setup, include =FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r}
 
 # Clean up workspace and load or install packages if necessary
 rm(list=ls())
@@ -60,13 +61,15 @@ This BCG data has had the following pre-processing:
 
 -   Assembled from state, regional, and federal agencies by VC and CLD
 
--   Biological index scores converted to BCG "proxy" by CLD (see script: "BCG_conversion_script.R")
+-   Biological index scores converted to BCG "proxy" by CLD (see script: "1.0_BCG_proxy_conversion.R")
 
--   BCG sample locations merged to WBD and NHD attributes by CLD (see script "BCG_spatial_analysis_script.R")
+-   BCG sample locations merged to the 2025 Watershed Boundary Dataset (WBD) (eg HUC12, HUC8 & HUC4 IDs) and NHD v2 Plusattributes by CLD (see script "1.0_BCG_proxy_conversion.Rmd")
 
 -   Additional pre-processing by VC and CLD (see script "0.1_qc_REVISED.R"):
 
     -   Filtered to 1 Observation per Site per Year
+
+    -   Subsamples were averaged to create an average BCG score per site/date
 
     -   Sites that were sampled multiple times per year were averaged to create an average BCG score per year
 
@@ -74,7 +77,7 @@ This BCG data has had the following pre-processing:
 #Read in pre-processed data: 
 
 bcg_data_filtered<-read_xlsx(paste(dir$output,
-"/bcg_data_filtered.xlsx", sep=""))
+"/bcg_data_cleaned_one_score_per_year.xlsx", sep=""))
 
 head(bcg_data_filtered)
 nrow(bcg_data_filtered)
@@ -96,7 +99,11 @@ names(bcg_data_filtered)
 Recent<-bcg_data_filtered %>%  
   group_by(LatLong_ID) %>%
   slice(which.max(year)) %>% #select most recent year for each site
-  ungroup() 
+  ungroup() %>% 
+  dplyr::select(-c(samples_per_year, total_samples_per_site)) %>% #drop unneeded columns
+  rename(BCG=BCG_yearly) #rename average yearly BCG for clarity
+  
+nrow(bcg_data_filtered)
 nrow(Recent)  
 
 #Look at date range for most recent samples
@@ -106,62 +113,20 @@ summary(Recent$year) #note this includes some old samples
 Recent<-Recent %>% 
   filter(year>2000)
 
-View(head(Recent))
+nrow(Recent)
+#View(head(Recent))
 
 #Check HUC8 IDs for leading zero 
 levels(factor(Recent$HUC8)) 
 
 nrow(Recent)
 names(Recent)
-write_xlsx(Recent, path =  paste(dir$output, "/bcg_most_recent_since2000.xlsx", sep=""))
 
 ```
 
-Calculate average BCG by HUC8
+#Having trouble with some HUC8 IDs being dropped, when they were based on HUC12 IDs, so will omit them here, and intersect directly with HUC8 shapefiles
 
-```{r}
-#calculate average BCG by HUC8 (since 2000)
-names(Recent)
-
-HUC8.avg<-Recent %>% 
-  #mutate(HUC8=sprintf("%08.0f", (HUC8)) %>% #NOTE: only include if need to add leading zero for IDs to get 8 digit ID 
-  group_by(HUC8) %>% 
-  summarize(BCG_avg=mean(BCG_yearly_avg), n=n()) %>% mutate(BCG_avg_round=round(BCG_avg, digits=0)) #create round number for average BCG 
-
-nrow(HUC8.avg)
-
-#Look at HUC8 watersheds with >=5 sample points
-View(HUC8.avg %>% filter(n>=5))
-#956/1464 watersheds have >= 5 sample points
-
-#recheck HUC8 IDs, leading zeros now included nrow(HUC8.avg)
-levels(factor(HUC8.avg$HUC8)) 
-
-#write to file 
-write_xlsx(HUC8.avg, path = paste(dir$output, "/BCG_avg_by_HUC8.xlsx", sep=""))
-```
-
-# Create spatial data for BCG sample locations
-
-```{r}
-#Converting to sf Object 
-
-names(Recent)
-BCG_sf <- st_as_sf(Recent, coords = c("Long","Lat")) 
-BCG_sf
-names(BCG_sf)
-
-#Set coordinate reference system to wgs84 
-st_crs(BCG_sf) = 4326 
-
-st_bbox(BCG_sf) #bounding box #can ID spatial extent of dataset
-
-#Do a quick check of spatial data
-plot(BCG_sf["BCG_yearly_avg"])
-
-```
-
-# Create spatial data for average BCG by HUC8
+# Read in HUC8 boundaries
 
 ```{r}
 
@@ -175,27 +140,228 @@ st_bbox(HUC8_shp) #check bounding box
 
 st_crs(HUC8_shp) #reference system is WGS84
 
+```
+
+# Create spatial data for BCG sample locations
+
+```{r}
+
+#Converting to sf Object 
+
+names(Recent)
+BCG_sf <- st_as_sf(Recent, coords = c("Long","Lat"), remove=FALSE) 
+BCG_sf
+names(BCG_sf)
+
+#Set coordinate reference system to wgs84 
+st_crs(BCG_sf) = 4326 
+
+st_bbox(BCG_sf) #bounding box #can ID spatial extent of dataset
+
+#Do a quick check of spatial data
+plot(BCG_sf["BCG"])
+
+#Check HUC8s with so many sample locations??
+
+tmap_mode("view")
+
+tm_shape(BCG_sf %>% filter(HUC8=="02060003"))+
+  tm_dots()
+#these do appear to be legitimate sampling locations
+
+names(BCG_sf)
+
+```
+
+# Merge HUC8 to BCG
+
+Drop formerly assigned HUC8, and reassign using shapefile loaded directly here
+
+```{r}
+st_crs(BCG_sf)
+st_crs(HUC8_shp)
+
+names(HUC8_shp)
+
+#Make valid geometry:
+HUC8_valid<-st_make_valid(HUC8_shp)
+
+#Merge HUC8 attributes to BCG locations
+start.time2<-Sys.time()
+start.time2
+
+HUC_BCG_all <- st_join(BCG_sf %>% dplyr::select(-c(HUC8)), 
+                       
+                    HUC8_valid %>% select(HUC8, NAME)) %>% 
+  dplyr::rename(huc8_name=NAME)
+
+end.time2<-Sys.time()
+total.time2<-end.time2-start.time2
+total.time2 #1 min
+
+
+View(HUC_BCG_all)
+
+#Check for BCG sites that don't have HUC8 IDs?
+nrow(BCG_sf)
+nrow(HUC_BCG_all)
+```
+
+# Add in Ecoregion attribute
+
+```{r}
+
+#Load in ecoregion boundaries
+
+ecoregions<-st_read(paste0(dir$spatial_dir, "/Major_Ecoregions.shp"))
+
+names(ecoregions)
+
+#quick map check
+plot(ecoregions$geometry)
+
+#check spatial reference
+st_crs(ecoregions)
+st_crs(HUC_BCG_all)
+
+#transform to same crs if needed
+ecoregions_proj<-st_transform(ecoregions, crs=st_crs(HUC_BCG_all))
+
+ecoregions_valid<-st_make_valid(ecoregions_proj)
+
+#join ecoregion attributes to BCG locations
+
+BCG_eco<-st_join(HUC_BCG_all, ecoregions_valid)
+
+View(BCG_eco %>% filter(is.na(WSA9_NAME)))
+
+tm_shape(BCG_eco %>% filter(is.na(WSA9_NAME)))+
+  tm_dots()+
+  tm_shape(ecoregions_valid)+
+  tm_borders()
+
+
+
+#17 points are right on the ecoregion border
+missing.points<-BCG_eco %>% filter(is.na(WSA9_NAME)) %>% dplyr::select(LatLong_ID)
+missing.points
+                                       
+#join these to nearest ecoregion
+
+BCG_eco_2_index<-st_nearest_feature(HUC_BCG_all %>% filter(LatLong_ID %in% missing.points$LatLong_ID), ecoregions_valid)
+
+BCG_eco2<-cbind(HUC_BCG_all %>% filter(LatLong_ID %in% missing.points$LatLong_ID), st_drop_geometry(ecoregions_valid[BCG_eco_2_index,]))
+
+View(ecoregions_valid[BCG_eco_2_index,])
+View(BCG_eco2)
+
+BCG_eco_all<-bind_rows(BCG_eco %>% filter(!is.na(WSA9_NAME)), BCG_eco2)
+nrow(BCG_eco_all)
+nrow(HUC_BCG_all)
+
+View(BCG_eco_all)
+```
+
+# Write "raw" data to file
+
+1 BCG score per site/year, with HUC8 ID attached
+
+```{r}
+
+#Add coordinates back in and drop geometry
+
+#write data to file
+write_xlsx(BCG_eco_all %>% 
+            st_drop_geometry(), path =  paste(dir$output, "/bcg_most_recent_since_2000.xlsx", sep=""))
+
+#write shapefile to file: 
+st_write(BCG_eco_all %>% dplyr::select(-c(COMID)), paste0(dir$spatial_dir, "/bcg_most_recent_since_2000.shp"), append=FALSE)
+```
+
+# Calculate average BCG by HUC8
+
+```{r}
+#calculate average BCG by HUC8 (since 2000)
+#and calculate number of samples per HUC8
+names(Recent)
+
+HUC8.avg<-BCG_eco_all %>% 
+  #mutate(HUC8=sprintf("%08.0f", (HUC8)) %>% #NOTE: only include if need to add leading zero for IDs to get 8 digit ID 
+  group_by(HUC8) %>% #create round number for average BCG 
+  summarize(BCG_avg=round(mean(BCG), digits=0), BCG_max=round(max(BCG), digits=0), BCG_min=round(min(BCG), digits=0), n=n()) %>% 
+  mutate(Number_of_levels=BCG_max-BCG_min)
+
+nrow(HUC8.avg)
+View(HUC8.avg)
+
+#Look at HUC8 watersheds with >=5 sample points
+View(HUC8.avg %>% filter(n>=5))
+#952/1630 watersheds have >= 5 sample points
+
+#recheck HUC8 IDs, leading zeros now included nrow(HUC8.avg)
+levels(factor(HUC8.avg$HUC8)) 
+
+#write to file 
+write_xlsx(HUC8.avg %>% st_drop_geometry(), path = paste(dir$output, "/BCG_avg_by_HUC8.xlsx", sep=""))
+
+```
+
+# Create spatial object: average BCG by HUC8
+
+```{r}
+
+#read in avg BCG by HUC8 if needed
+HUC8.avg<-read_excel(paste0(dir$output, "./BCG_avg_by_HUC8.xlsx"))
+head(HUC8.avg)
+
 #Merge average BCG information to HUC8s 
-HUC.BCG<-merge(HUC8_shp, HUC8.avg, by="HUC8", all.x=TRUE) 
-head(HUC.BCG)
+
+HUC.BCG<-merge(HUC8_valid %>% dplyr::select(HUC8, NAME, AREASQKM, STATES), HUC8.avg %>% st_drop_geometry(), by="HUC8", all.x=TRUE) %>% 
+  rename(HUC_NAME=NAME)
+
+#Check for any HUCs with BCG data that didn't join to shape file
+anti_join(HUC8.avg %>% st_drop_geometry(), HUC8_shp, by=c("HUC8"))
+
+View(HUC.BCG)
 nrow(HUC.BCG)
 
-#Simplify columns
-HUC.BCG.simple<-HUC.BCG %>% dplyr::select(HUC8, AREASQKM, STATES, NAME, BCG_avg_round, n, geometry) %>% 
-  rename(BCG_AVG=BCG_avg_round) #make cleaner column name
+
+#Simple plot of HUC8s - Warning! this takes a long time to plot
+#plot(HUC.BCG["BCG_avg"])
+
+#Add ecoregion
+#first transform to same crs
+#Joins HUC8 to ecoregion that has the maximum intersection area
 
 
-View(HUC.BCG.simple)
+HUC.BCG.proj<-st_transform(HUC.BCG, crs=st_crs(ecoregions))
 
+HUC.BCG.eco<-st_join(HUC.BCG.proj, ecoregions, largest=TRUE)
 
-names(HUC.BCG)
+View(HUC.BCG.eco)
+st_crs(HUC.BCG.eco)
 
-#Simple plot of HUC8s 
-plot(HUC.BCG["BCG_avg_round"])
-plot(st_geometry(HUC.BCG))
 
 
 #Write Avg BCG by HUC8 to shapefile:
-st_write(HUC.BCG.simple, paste(dir$spatial_dir, "/BCG_avg_by_HUC8.shp", sep=""), append=FALSE)
+st_write(HUC.BCG.eco, paste(dir$spatial_dir, "/BCG_avg_by_HUC8.shp", sep=""), append=FALSE)
+
+```
+
+# Make a nicer map - BCG by HUC8
+
+```{r}
+
+names(HUC.BCG.simple)
+
+HUC.BCG.simple$BCG_AVG<-as.factor(HUC.BCG.simple$BCG_AVG)
+
+tmap_mode("view")
+
+palette1<-c('#edf8fb','#b3cde3','#8c96c6','#8856a7','#810f7c')
+
+tm_shape(HUC.BCG.simple)+
+  tm_polygons(col="BCG_AVG", palette=palette1)
+
 
 ```

@@ -115,6 +115,8 @@ Notes:
     downloaded more recently and was pre-formatted differently; see note
     and separate data processing for IA below
 
+### Data from Round 1
+
 ```{r}
 ###
 #Read in files for all states from round 1 EXCEPT Iowa:
@@ -253,7 +255,7 @@ write_xlsx(BCG.Round1.ALL, paste(dir$output, "/EPA_Round1_BCG_data_allsamples.xl
 BCG "proxies" for these datasets were assigned according to methods
 described in Bonacquist-Currin et al. (in prep).
 
-**Chesapeake:**
+### **Chesapeake:**
 
 ```{r}
 #Chesapeake Bay index (BIBI)
@@ -286,7 +288,7 @@ ches1 %>% dplyr::select(SiteID) %>%
   count()
 ```
 
-**New York:**
+### **New York:**
 
 ```{r}
 #New York BAP
@@ -324,7 +326,7 @@ ny1 %>% group_by(SiteID) %>%
   count()
 ```
 
-**Georgia:**
+### **Georgia:**
 
 ```{r}
 #Georgia IBI
@@ -367,7 +369,7 @@ ga1 %>% group_by(SiteID) %>%
 
 ```
 
-**Texas:**
+### **Texas:**
 
 note: updated 5.13.25 to better reflect BCG categories mapped onto IBI
 
@@ -457,7 +459,7 @@ tx.all %>% group_by(SiteID) %>%
 
 ```
 
-**California:**
+### **California:**
 
 Note that we only have scores from the Southern California Coastal Water
 Project (a small portion of the state)
@@ -499,7 +501,7 @@ ca1 %>% group_by(SiteID) %>%
 
 ```
 
-**Idaho:**
+### **Idaho:**
 
 ```{r}
 #Idaho 
@@ -545,7 +547,7 @@ Idaho1 %>% group_by(SiteID) %>%
   count()
 ```
 
-**Oregon:**
+### **Oregon:**
 
 ```{r}
 #Oregon 
@@ -592,7 +594,7 @@ OR1 %>% group_by(SiteID) %>%
 
 ```
 
-**Wyoming:**
+### **Wyoming:**
 
 ```{r}
 #Wyoming 
@@ -656,7 +658,7 @@ WY.BCG %>% group_by(SiteID) %>%
 
 ```
 
-**Nebraska:**
+### **Nebraska:**
 
 ```{r}
 #Nebraska
@@ -693,7 +695,7 @@ NE1 %>% group_by(SiteID) %>%
 
 ```
 
-**USEPA National Data:**
+### **USEPA National Data:**
 
 From EPA National Aquatic Resource Surveys. Data is from 2013-2014, and
 2008-2009. More recent data is available for 2018-2018, but it doesn't
@@ -839,7 +841,7 @@ rbind(nrsa.BCG, nrsa.BCG_2008) %>% group_by(SiteID) %>% dplyr::select(SiteID) %>
 
 ```
 
-**Arizona:**
+### **Arizona:**
 
 ```{r}
 #Arizona
@@ -885,7 +887,7 @@ az1 %>% group_by(SiteID) %>%
 
 ```
 
-**Florida**
+### **Florida**
 
 Notes:
 
@@ -945,7 +947,7 @@ Florida1 %>% group_by(SiteID) %>%
 
 ```
 
-**Connecticut:**
+### **Connecticut:**
 
 Notes:
 
@@ -1013,7 +1015,7 @@ CT1 %>% group_by(SiteID) %>%
 
 ```
 
-#### North Carolina
+### North Carolina
 
 -update 5.14.25
 
@@ -1267,11 +1269,12 @@ start.time2<-Sys.time()
 start.time2
 
 EPA.NHD.HUC12 <- st_join(EPA.NHD2 %>% filter(!is.na(comid)), 
-                    HUC12_valid %>% select(huc12, name, areasqkm))
+                    HUC12_valid %>% select(huc12, name, areasqkm)) %>% 
+  dplyr::rename(huc12_name=name)
 
 end.time2<-Sys.time()
 total.time2<-end.time2-start.time2
-total.time2
+total.time2 #~7.4 minutes
 
 nrow(EPA.NHD.HUC12) #check number of rows
 
@@ -1290,7 +1293,7 @@ plot(EPA.NHD.HUC12["BCG_proxy"])
 
 Include only needed columns
 
-Create other HUC ID columns if needed
+Create HUC8 and HUC4 IDs from HUC12
 
 Add lat/long back in as columns
 
@@ -1311,12 +1314,13 @@ coord_df <- EPA.NHD.HUC12 %>%
 
 head(coord_df)
 
+#Obtain HUC8 and HUC4 IDs from HUC12
 BCG_clean<-EPA.NHD.HUC12 %>% 
   st_drop_geometry() %>%
   dplyr::bind_cols(coord_df) %>%  
   mutate(HUC8=str_sub(huc12,1,8)) %>% 
   mutate(HUC4=str_sub(huc12, 1, 4)) %>% 
-  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy, HUC8, name,
+  select(State, SiteID, Date, Lat, Long, Taxa, BCG_proxy, HUC8, huc12_name,
           areasqkm, comid, gnis_id, gnis_name, lengthkm, reachcode, ftype, fcode, streamleve,
           streamorde, HUC4, HUC8, huc12)
 
